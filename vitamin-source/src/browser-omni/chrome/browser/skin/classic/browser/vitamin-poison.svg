@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <!-- Two-tone circular pill -->
+  <!-- Left half (darker/filled) -->
+  <path d="M8 1 A7 7 0 0 0 8 15 L8 1 Z" fill="context-fill" fill-opacity="context-fill-opacity"/>
+  <!-- Right half (lighter/outline only) -->
+  <path d="M8 1 A7 7 0 0 1 8 15" fill="none" stroke="context-fill" stroke-opacity="context-fill-opacity" stroke-width="1.5"/>
+  <!-- Divider line -->
+  <line x1="8" y1="1" x2="8" y2="15" stroke="context-fill" stroke-opacity="0.3" stroke-width="0.5"/>
+</svg>

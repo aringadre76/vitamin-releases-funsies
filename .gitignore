@@ -1,0 +1,38 @@
+# Pre-built binaries
+vitamin-browser/
+vitamin-browser1.0WedDec172025/
+essential-build-artifacts/
+vitamin-mac-build-artifacts/
+vitamin-releases/
+release-staging/
+
+# Electron version (deprecated)
+vitamin-electron-development/
+
+# Checkpoints & scratch
+vitamin-checkpoints/
+the bin/
+
+# Build artifacts
+vitamin-source/dist/
+*.ja
+*.ja.bak
+
+# Archives
+*.tar.xz
+*.tar.gz
+*.tar.bz2
+
+# Base LibreWolf browser-omni (not Vitamin source)
+# Only Vitamin-specific files are tracked via git add -f
+vitamin-source/src/browser-omni/
+
+# OS files
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# Backup git dirs
+.git-backup/
+vitamin-source/.git-backup/

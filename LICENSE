@@ -1,0 +1,35 @@
+GNU GENERAL PUBLIC LICENSE
+Version 3, 29 June 2007
+
+Copyright (C) 2025 Vitali, VitaliCorp
+Email: mrvitali@pm.me
+
+Vitamin Browser - Supplement your search
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+
+NOTICE: This project contains multiple components under different licenses:
+
+1. Vitamin Browser (Electron version) - GPL-3.0-or-later
+   Located in: vitamin-electron-development/
+
+2. Vitamin Browser (LibreWolf patches) - MPL-2.0
+   Located in: vitamin-source/, librewolf-vitamin/
+   The LibreWolf/Firefox base code is licensed under MPL-2.0.
+   Vitamin-specific additions are dual-licensed under MPL-2.0 and GPL-3.0.
+
+Both licenses are compatible. See the respective LICENSE files in each
+subdirectory for details.

@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="color-scheme" content="light dark">
+  <style>
+    :root {
+      --bg: #1a1a1a;
+      --bg-hover: #252525;
+      --text: #e0e0e0;
+      --text-dim: #888;
+      --accent: #ff8c00;
+      --border: #333;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 13px;
+      background: var(--bg);
+      color: var(--text);
+      padding: 16px;
+      min-width: 280px;
+    }
+    h2 {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 16px;
+      color: var(--accent);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .setting {
+      margin-bottom: 16px;
+    }
+    .setting:last-child {
+      margin-bottom: 0;
+    }
+    label {
+      display: block;
+      margin-bottom: 6px;
+      font-weight: 500;
+    }
+    .hint {
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-top: 4px;
+    }
+    input[type="range"] {
+      width: 100%;
+      height: 4px;
+      -webkit-appearance: none;
+      background: var(--border);
+      border-radius: 2px;
+      outline: none;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 16px;
+      height: 16px;
+      background: var(--accent);
+      border-radius: 50%;
+      cursor: pointer;
+    }
+    input[type="range"]::-moz-range-thumb {
+      width: 16px;
+      height: 16px;
+      background: var(--accent);
+      border-radius: 50%;
+      cursor: pointer;
+      border: none;
+    }
+    .range-value {
+      display: inline-block;
+      min-width: 50px;
+      text-align: right;
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .range-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .toggle-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .toggle-row:last-child {
+      border-bottom: none;
+    }
+    .toggle {
+      position: relative;
+      width: 40px;
+      height: 22px;
+    }
+    .toggle input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    .toggle-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: var(--border);
+      border-radius: 11px;
+      transition: 0.2s;
+    }
+    .toggle-slider:before {
+      position: absolute;
+      content: "";
+      height: 16px;
+      width: 16px;
+      left: 3px;
+      bottom: 3px;
+      background: #666;
+      border-radius: 50%;
+      transition: 0.2s;
+    }
+    .toggle input:checked + .toggle-slider {
+      background: var(--accent);
+    }
+    .toggle input:checked + .toggle-slider:before {
+      transform: translateX(18px);
+      background: white;
+    }
+    .section {
+      margin-bottom: 20px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .section:last-child {
+      border-bottom: none;
+      margin-bottom: 0;
+      padding-bottom: 0;
+    }
+    .section-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-dim);
+      margin-bottom: 12px;
+    }
+    button {
+      width: 100%;
+      padding: 10px;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 16px;
+    }
+    button:hover {
+      filter: brightness(1.1);
+    }
+  </style>
+</head>
+<body>
+  <h2>Poison Settings</h2>
+
+  <div class="section">
+    <div class="section-title">Timing</div>
+
+    <div class="setting">
+      <label>New Tab Frequency</label>
+      <div class="range-row">
+        <input type="range" id="frequency" min="15" max="120" value="40">
+        <span class="range-value" id="frequency-value">40s</span>
+      </div>
+      <div class="hint">How often to open new poison tabs</div>
+    </div>
+
+    <div class="setting">
+      <label>Tab Lifetime</label>
+      <div class="range-row">
+        <input type="range" id="lifetime" min="15" max="120" value="45">
+        <span class="range-value" id="lifetime-value">45s</span>
+      </div>
+      <div class="hint">How long each tab stays open</div>
+    </div>
+
+    <div class="setting">
+      <label>Max Concurrent Tabs</label>
+      <div class="range-row">
+        <input type="range" id="maxTabs" min="1" max="5" value="2">
+        <span class="range-value" id="maxTabs-value">2</span>
+      </div>
+      <div class="hint">Maximum poison tabs open at once</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Search Engines</div>
+    <div class="toggle-row">
+      <span>Google</span>
+      <label class="toggle">
+        <input type="checkbox" id="engine-google">
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+    <div class="toggle-row">
+      <span>Bing</span>
+      <label class="toggle">
+        <input type="checkbox" id="engine-bing" checked>
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+    <div class="toggle-row">
+      <span>Yahoo</span>
+      <label class="toggle">
+        <input type="checkbox" id="engine-yahoo" checked>
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+    <div class="hint">Google may trigger CAPTCHAs with frequent use</div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Behavior</div>
+    <div class="toggle-row">
+      <span>Auto-start on launch</span>
+      <label class="toggle">
+        <input type="checkbox" id="autoStart">
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+    <div class="toggle-row">
+      <span>Click search results</span>
+      <label class="toggle">
+        <input type="checkbox" id="clickResults" checked>
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+  </div>
+
+  <button id="save">Save Settings</button>
+
+  <script>
+    function initSettings() {
+      // Get settings from bridge
+      const settings = window.VitaminPoisonBridge?.getSettings() || {};
+
+      // Populate form
+      document.getElementById('frequency').value = settings.frequency || 40;
+      document.getElementById('lifetime').value = settings.lifetime || 45;
+      document.getElementById('maxTabs').value = settings.maxTabs || 2;
+      document.getElementById('engine-google').checked = settings.engineGoogle ?? false;
+      document.getElementById('engine-bing').checked = settings.engineBing ?? true;
+      document.getElementById('engine-yahoo').checked = settings.engineYahoo ?? true;
+      document.getElementById('autoStart').checked = settings.autoStart ?? false;
+      document.getElementById('clickResults').checked = settings.clickResults ?? true;
+
+      updateValues();
+    }
+
+    // Update displayed values
+    function updateValues() {
+      document.getElementById('frequency-value').textContent = document.getElementById('frequency').value + 's';
+      document.getElementById('lifetime-value').textContent = document.getElementById('lifetime').value + 's';
+      document.getElementById('maxTabs-value').textContent = document.getElementById('maxTabs').value;
+    }
+
+    document.getElementById('frequency').addEventListener('input', updateValues);
+    document.getElementById('lifetime').addEventListener('input', updateValues);
+    document.getElementById('maxTabs').addEventListener('input', updateValues);
+
+    // Save
+    document.getElementById('save').addEventListener('click', () => {
+      const newSettings = {
+        frequency: parseInt(document.getElementById('frequency').value),
+        lifetime: parseInt(document.getElementById('lifetime').value),
+        maxTabs: parseInt(document.getElementById('maxTabs').value),
+        engineGoogle: document.getElementById('engine-google').checked,
+        engineBing: document.getElementById('engine-bing').checked,
+        engineYahoo: document.getElementById('engine-yahoo').checked,
+        autoStart: document.getElementById('autoStart').checked,
+        clickResults: document.getElementById('clickResults').checked,
+      };
+
+      // Send to parent via bridge
+      if (window.VitaminPoisonBridge) {
+        window.VitaminPoisonBridge.saveSettings(newSettings);
+      }
+    });
+
+    // Init on load or when bridge becomes available
+    if (window.VitaminPoisonBridge) {
+      initSettings();
+    }
+
+    // Expose for parent to call
+    window.initSettings = initSettings;
+  </script>
+</body>
+</html>

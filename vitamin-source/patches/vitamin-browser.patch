@@ -1,0 +1,2836 @@
+# Vitamin Browser Patch
+# Apply to LibreWolf browser-omni source
+
+--- /dev/null
++++ b/actors/VitaminPoisonChild.sys.mjs
+@@ -0,0 +1,770 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/**
++ * VitaminPoisonChild - Content process actor for human-like behavior simulation
++ * Implements realistic mouse movements, scrolling, and link clicking
++ */
++
++export class VitaminPoisonChild extends JSWindowActorChild {
++  constructor() {
++    super();
++    this.currentX = 0;
++    this.currentY = 0;
++    // Fitts's Law constants (empirically derived)
++    this.FITTS_A = 50;  // Base time (ms)
++    this.FITTS_B = 150; // Movement factor
++    // Human micro-tremor frequency (~10Hz)
++    this.TREMOR_FREQ = 10;
++    this.TREMOR_AMP = 1.5;
++  }
++
++  receiveMessage(message) {
++    switch (message.name) {
++      case "VitaminPoison:Scroll":
++        this.doScroll(message.data);
++        break;
++      case "VitaminPoison:ScrollSequence":
++        this.doScrollSequence(message.data);
++        break;
++      case "VitaminPoison:SimulateBehavior":
++        this.simulateBehavior(message.data);
++        break;
++    }
++    return null;
++  }
++
++  doScroll(data) {
++    const { amount } = data;
++    try {
++      this.contentWindow.scrollBy({ top: amount, behavior: "smooth" });
++    } catch (e) {
++      // Window may have been closed
++    }
++  }
++
++  doScrollSequence(data) {
++    const { scrolls } = data;
++    let index = 0;
++
++    const doNext = () => {
++      if (index >= scrolls.length) return;
++
++      const { amount, delay } = scrolls[index];
++      try {
++        this.contentWindow.scrollBy({ top: amount, behavior: "smooth" });
++      } catch (e) {
++        return;
++      }
++
++      index++;
++      if (index < scrolls.length) {
++        this.contentWindow.setTimeout(doNext, delay);
++      }
++    };
++
++    doNext();
++  }
++
++  // Main behavior simulation entry point
++  simulateBehavior(data) {
++    const { sequence, isSearchPage, fingerprint } = data;
++
++    // Spoof fingerprint properties first (before any trackers can read them)
++    if (fingerprint) {
++      this.spoofFingerprint(fingerprint);
++    }
++
++    // Initialize mouse position
++    this.currentX = this.contentWindow.innerWidth / 2;
++    this.currentY = this.contentWindow.innerHeight / 2;
++
++    // First check for CAPTCHA
++    this.contentWindow.setTimeout(async () => {
++      const captchaResult = this.detectAndHandleRecaptcha();
++
++      if (captchaResult.detected) {
++        if (captchaResult.solvable && captchaResult.element) {
++          // Try to solve checkbox CAPTCHA
++          const solved = await this.attemptRecaptchaCheckbox(captchaResult.element);
++          if (!solved) {
++            // Failed to solve - notify parent to close tab
++            this.sendAsyncMessage("VitaminPoison:CaptchaDetected", {
++              type: captchaResult.type,
++              solved: false
++            });
++            return;
++          }
++          // Solved! Continue with behavior
++        } else {
++          // Unsolvable CAPTCHA - notify parent to close tab
++          this.sendAsyncMessage("VitaminPoison:CaptchaDetected", {
++            type: captchaResult.type,
++            solved: false
++          });
++          return;
++        }
++      }
++
++      // Handle cookie banners
++      this.handleCookieBanner();
++
++      // Start behavior sequence after brief delay
++      this.contentWindow.setTimeout(() => {
++        this.executeSequence(sequence, 0);
++      }, 500);
++    }, 1000);
++  }
++
++  // Spoof navigator and screen properties to match the fingerprint
++  // Note: JS property spoofing is limited due to CSP - HTTP headers do the heavy lifting
++  spoofFingerprint(fp) {
++    // Fingerprint spoofing via JS is unreliable due to CSP restrictions
++    // The HTTP User-Agent header spoofing in the parent process handles the main fingerprint
++    // This is intentionally minimal to avoid browser freezes
++    return;
++  }
++
++  executeSequence(sequence, index) {
++    if (index >= sequence.length) return;
++
++    const action = sequence[index];
++
++    try {
++      switch (action.type) {
++        case "pause":
++          this.contentWindow.setTimeout(() => {
++            this.executeSequence(sequence, index + 1);
++          }, action.duration);
++          break;
++
++        case "mouseMove":
++          this.simulateMouseMove(action.x, action.y, action.duration, () => {
++            this.executeSequence(sequence, index + 1);
++          });
++          break;
++
++        case "scroll":
++          this.simulateSmoothScroll(action.amount, action.duration, () => {
++            this.executeSequence(sequence, index + 1);
++          });
++          break;
++
++        case "clickSearchResult":
++          this.clickSearchResult(action.resultIndex, () => {
++            this.executeSequence(sequence, index + 1);
++          });
++          break;
++
++        default:
++          this.executeSequence(sequence, index + 1);
++      }
++    } catch (e) {
++      // Continue with next action even if one fails
++      this.contentWindow.setTimeout(() => {
++        this.executeSequence(sequence, index + 1);
++      }, 100);
++    }
++  }
++
++  // Fitts's Law: Calculate realistic movement time based on distance and target size
++  fittsMovementTime(distance, targetWidth = 50) {
++    // MT = a + b * log2(D/W + 1)
++    const id = Math.log2(distance / targetWidth + 1); // Index of difficulty
++    return this.FITTS_A + this.FITTS_B * id;
++  }
++
++  // Human-like velocity profile (slow-fast-slow with asymmetry)
++  velocityProfile(t) {
++    // Minimum jerk trajectory (realistic human movement)
++    // Slightly asymmetric - faster acceleration, slower deceleration
++    const t2 = t * t;
++    const t3 = t2 * t;
++    const t4 = t3 * t;
++    const t5 = t4 * t;
++    return 10 * t3 - 15 * t4 + 6 * t5;
++  }
++
++  // Generate micro-tremor (human hand shake ~8-12Hz)
++  microTremor(time) {
++    const freq = this.TREMOR_FREQ + (Math.random() - 0.5) * 4;
++    const amp = this.TREMOR_AMP * (0.5 + Math.random() * 0.5);
++    return Math.sin(time * freq * 2 * Math.PI / 1000) * amp;
++  }
++
++  // Bezier curve for natural mouse movement
++  bezierPoint(t, p0, p1, p2, p3) {
++    const u = 1 - t;
++    return u * u * u * p0 + 3 * u * u * t * p1 + 3 * u * t * t * p2 + t * t * t * p3;
++  }
++
++  // Generate control points with human-like curvature
++  generateControlPoints(startX, startY, endX, endY) {
++    const dx = endX - startX;
++    const dy = endY - startY;
++    const dist = Math.sqrt(dx * dx + dy * dy);
++
++    // Curvature varies with distance (longer = more curve)
++    const curveFactor = Math.min(0.4, dist / 1000);
++
++    // Perpendicular offset for arc
++    const perpX = -dy / dist * curveFactor * dist * (Math.random() - 0.3);
++    const perpY = dx / dist * curveFactor * dist * (Math.random() - 0.3);
++
++    const cp1x = startX + dx * 0.25 + perpX * 0.5;
++    const cp1y = startY + dy * 0.25 + perpY * 0.5;
++    const cp2x = startX + dx * 0.75 + perpX * 0.5;
++    const cp2y = startY + dy * 0.75 + perpY * 0.5;
++
++    return { cp1x, cp1y, cp2x, cp2y };
++  }
++
++  // Fitts's Law mouse movement with overshoot and correction
++  simulateMouseMove(targetX, targetY, requestedDuration, callback) {
++    const startX = this.currentX;
++    const startY = this.currentY;
++    const dx = targetX - startX;
++    const dy = targetY - startY;
++    const distance = Math.sqrt(dx * dx + dy * dy);
++
++    if (distance < 5) {
++      callback();
++      return;
++    }
++
++    // Use Fitts's Law for duration (ignore requested, calculate realistic)
++    const duration = Math.max(150, this.fittsMovementTime(distance));
++
++    // 30% chance of overshoot on longer movements
++    const willOvershoot = distance > 100 && Math.random() < 0.3;
++    const overshootAmount = willOvershoot ? (0.05 + Math.random() * 0.1) : 0;
++
++    // Overshoot target
++    const overshootX = targetX + dx * overshootAmount;
++    const overshootY = targetY + dy * overshootAmount;
++
++    const { cp1x, cp1y, cp2x, cp2y } = this.generateControlPoints(startX, startY, overshootX, overshootY);
++
++    const steps = Math.max(15, Math.floor(duration / 12)); // ~83fps for smoothness
++    let currentStep = 0;
++    const startTime = Date.now();
++    const self = this;
++
++    const moveStep = () => {
++      const elapsed = Date.now() - startTime;
++      const t = Math.min(1, elapsed / duration);
++
++      if (t >= 1) {
++        if (willOvershoot) {
++          // Correction movement back to actual target
++          self.currentX = overshootX;
++          self.currentY = overshootY;
++          self.contentWindow.setTimeout(() => {
++            self.simulateCorrection(targetX, targetY, callback);
++          }, 30 + Math.random() * 50);
++        } else {
++          self.currentX = targetX;
++          self.currentY = targetY;
++          self.dispatchMouseEvent("mousemove", targetX, targetY);
++          callback();
++        }
++        return;
++      }
++
++      // Apply velocity profile
++      const vt = self.velocityProfile(t);
++
++      const x = self.bezierPoint(vt, startX, cp1x, cp2x, overshootX);
++      const y = self.bezierPoint(vt, startY, cp1y, cp2y, overshootY);
++
++      // Add micro-tremor
++      const tremor = self.microTremor(elapsed);
++      const tremorAngle = Math.random() * Math.PI * 2;
++
++      self.currentX = x + Math.cos(tremorAngle) * tremor;
++      self.currentY = y + Math.sin(tremorAngle) * tremor;
++
++      self.dispatchMouseEvent("mousemove", self.currentX, self.currentY);
++
++      self.contentWindow.setTimeout(moveStep, 12);
++    };
++
++    moveStep();
++  }
++
++  // Correction movement after overshoot (quick, small adjustment)
++  simulateCorrection(targetX, targetY, callback) {
++    const startX = this.currentX;
++    const startY = this.currentY;
++    const distance = Math.sqrt((targetX - startX) ** 2 + (targetY - startY) ** 2);
++    const duration = 50 + distance * 2;
++    const steps = Math.max(5, Math.floor(duration / 16));
++    let currentStep = 0;
++    const self = this;
++
++    const correctStep = () => {
++      currentStep++;
++      const t = currentStep / steps;
++
++      // Quick ease-out
++      const et = 1 - Math.pow(1 - t, 2);
++
++      self.currentX = startX + (targetX - startX) * et;
++      self.currentY = startY + (targetY - startY) * et;
++      self.dispatchMouseEvent("mousemove", self.currentX, self.currentY);
++
++      if (currentStep >= steps) {
++        self.currentX = targetX;
++        self.currentY = targetY;
++        callback();
++      } else {
++        self.contentWindow.setTimeout(correctStep, 16);
++      }
++    };
++
++    correctStep();
++  }
++
++  // Dispatch mouse event at given coordinates
++  dispatchMouseEvent(type, x, y) {
++    try {
++      const event = new this.contentWindow.MouseEvent(type, {
++        bubbles: true,
++        cancelable: true,
++        clientX: x,
++        clientY: y,
++        screenX: x,
++        screenY: y,
++        view: this.contentWindow
++      });
++
++      // Find element at position and dispatch event
++      const element = this.document.elementFromPoint(x, y);
++      if (element) {
++        element.dispatchEvent(event);
++      }
++    } catch (e) {
++      // Ignore errors from event dispatch
++    }
++  }
++
++  // Smooth scroll with variable speed (faster in middle, slower at edges)
++  simulateSmoothScroll(amount, duration, callback) {
++    const steps = Math.max(5, Math.floor(duration / 50));
++    let currentStep = 0;
++    let scrolled = 0;
++
++    const scrollStep = () => {
++      if (currentStep >= steps) {
++        callback();
++        return;
++      }
++
++      // Ease-in-out for natural scroll feel
++      let t = (currentStep + 1) / steps;
++      t = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
++
++      const targetScrolled = amount * t;
++      const stepAmount = targetScrolled - scrolled;
++
++      this.contentWindow.scrollBy({ top: stepAmount, behavior: "auto" });
++      scrolled = targetScrolled;
++
++      currentStep++;
++      this.contentWindow.setTimeout(scrollStep, duration / steps);
++    };
++
++    scrollStep();
++  }
++
++  // Check if URL is safe to click
++  isUrlSafe(href) {
++    const lowerHref = href.toLowerCase();
++
++    // BLOCK: Download file extensions
++    const dangerousExtensions = [
++      '.exe', '.msi', '.dmg', '.pkg', '.deb', '.rpm', '.appimage',
++      '.zip', '.rar', '.7z', '.tar', '.gz', '.bz2',
++      '.iso', '.img', '.bin',
++      '.bat', '.cmd', '.sh', '.ps1', '.vbs', '.js',
++      '.apk', '.ipa',
++      '.torrent', '.magnet'
++    ];
++    for (const ext of dangerousExtensions) {
++      if (lowerHref.includes(ext)) return false;
++    }
++
++    // BLOCK: Shopping/checkout/payment
++    const shoppingPatterns = [
++      'checkout', 'check-out', 'cart', 'basket', 'buy-now', 'buynow',
++      'purchase', 'payment', 'pay-now', 'paynow', 'order-now', 'ordernow',
++      'add-to-cart', 'addtocart', 'add-to-basket', 'billing',
++      'subscribe', 'subscription', 'upgrade', 'pricing',
++      '/pay/', '/buy/', '/order/', '/shop/cart', '/checkout/',
++      'paypal', 'stripe.com', 'square.com'
++    ];
++    for (const pattern of shoppingPatterns) {
++      if (lowerHref.includes(pattern)) return false;
++    }
++
++    // BLOCK: Login/signup/auth pages
++    const authPatterns = [
++      'login', 'log-in', 'signin', 'sign-in', 'signup', 'sign-up',
++      'register', 'auth/', 'oauth', 'sso/', 'account/create',
++      'forgot-password', 'reset-password', 'verify-email'
++    ];
++    for (const pattern of authPatterns) {
++      if (lowerHref.includes(pattern)) return false;
++    }
++
++    // BLOCK: URL shorteners (hide destination)
++    const shorteners = [
++      'bit.ly', 'tinyurl', 't.co', 'goo.gl', 'ow.ly', 'is.gd',
++      'buff.ly', 'adf.ly', 'bit.do', 'mcaf.ee', 'su.pr'
++    ];
++    for (const shortener of shorteners) {
++      if (lowerHref.includes(shortener)) return false;
++    }
++
++    // BLOCK: Potentially dangerous sites
++    const dangerousSites = [
++      'malware', 'virus', 'crack', 'keygen', 'warez', 'torrent',
++      'phishing', 'scam'
++    ];
++    for (const site of dangerousSites) {
++      if (lowerHref.includes(site)) return false;
++    }
++
++    return true;
++  }
++
++  // Detect and handle reCAPTCHA challenges
++  detectAndHandleRecaptcha() {
++    try {
++      const doc = this.document;
++      const url = this.contentWindow.location.href;
++
++      // Check for Google "unusual traffic" page
++      if (url.includes("google.com") && url.includes("sorry")) {
++        return { detected: true, type: "blocked", solvable: false };
++      }
++
++      // Check for reCAPTCHA iframe
++      const recaptchaFrame = doc.querySelector('iframe[src*="recaptcha"]');
++      if (recaptchaFrame) {
++        return { detected: true, type: "recaptcha_frame", solvable: false };
++      }
++
++      // Check for reCAPTCHA v2 checkbox
++      const recaptchaCheckbox = doc.querySelector('.g-recaptcha, .recaptcha-checkbox, [data-sitekey]');
++      if (recaptchaCheckbox) {
++        return { detected: true, type: "checkbox", solvable: true, element: recaptchaCheckbox };
++      }
++
++      // Check for image challenge (if already triggered)
++      const imageChallenge = doc.querySelector('.rc-imageselect, .rc-image-tile-wrapper, [class*="rc-image"]');
++      if (imageChallenge) {
++        return { detected: true, type: "image_challenge", solvable: false };
++      }
++
++      // Check for hCaptcha
++      const hcaptcha = doc.querySelector('.h-captcha, iframe[src*="hcaptcha"]');
++      if (hcaptcha) {
++        return { detected: true, type: "hcaptcha", solvable: false };
++      }
++
++      // Check for generic CAPTCHA indicators in page text
++      const bodyText = doc.body?.innerText?.toLowerCase() || "";
++      if (bodyText.includes("unusual traffic") ||
++          bodyText.includes("not a robot") ||
++          bodyText.includes("verify you're human") ||
++          bodyText.includes("captcha")) {
++        return { detected: true, type: "generic", solvable: false };
++      }
++
++      return { detected: false };
++    } catch (e) {
++      return { detected: false };
++    }
++  }
++
++  // Attempt to solve reCAPTCHA checkbox (just click it with human-like behavior)
++  async attemptRecaptchaCheckbox(element) {
++    try {
++      // Find the actual clickable checkbox
++      let checkbox = element.querySelector('.recaptcha-checkbox') ||
++                     element.querySelector('[role="checkbox"]') ||
++                     element;
++
++      // Try to find it in iframe if not directly accessible
++      if (!checkbox || !checkbox.getBoundingClientRect) {
++        const iframe = this.document.querySelector('iframe[src*="recaptcha"]');
++        if (iframe) {
++          try {
++            const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
++            if (iframeDoc) {
++              checkbox = iframeDoc.querySelector('.recaptcha-checkbox, [role="checkbox"]');
++            }
++          } catch (e) {
++            // Cross-origin iframe, can't access
++            return false;
++          }
++        }
++      }
++
++      if (!checkbox) return false;
++
++      const rect = checkbox.getBoundingClientRect();
++      if (rect.width === 0 || rect.height === 0) return false;
++
++      // Calculate click position with slight randomness (humans don't click center exactly)
++      const clickX = rect.left + rect.width * (0.3 + Math.random() * 0.4);
++      const clickY = rect.top + rect.height * (0.3 + Math.random() * 0.4);
++
++      // Move mouse to checkbox with Fitts's Law timing
++      return new Promise(resolve => {
++        // Pre-click pause (human hesitation)
++        this.contentWindow.setTimeout(() => {
++          this.simulateMouseMove(clickX, clickY, 0, () => {
++            // Pause before clicking (reading/confirming)
++            this.contentWindow.setTimeout(() => {
++              // Click sequence
++              this.dispatchMouseEvent("mousedown", clickX, clickY);
++              this.contentWindow.setTimeout(() => {
++                this.dispatchMouseEvent("mouseup", clickX, clickY);
++                this.dispatchMouseEvent("click", clickX, clickY);
++
++                // Try actual click too
++                try { checkbox.click(); } catch (e) {}
++
++                // Wait to see if image challenge appears
++                this.contentWindow.setTimeout(() => {
++                  const result = this.detectAndHandleRecaptcha();
++                  if (result.type === "image_challenge") {
++                    resolve(false); // Failed, image challenge appeared
++                  } else if (!result.detected) {
++                    resolve(true); // Success, CAPTCHA gone
++                  } else {
++                    resolve(false); // Still there, failed
++                  }
++                }, 2000);
++              }, 50 + Math.random() * 80);
++            }, 200 + Math.random() * 400);
++          });
++        }, 500 + Math.random() * 500);
++      });
++    } catch (e) {
++      return false;
++    }
++  }
++
++  // Try to handle cookie consent banners (accept to maximize tracking/poisoning)
++  handleCookieBanner() {
++    // Words that indicate we should NOT click (settings/manage buttons)
++    const rejectWords = [
++      'manage', 'settings', 'preferences', 'customize', 'customise',
++      'options', 'reject', 'decline', 'deny', 'refuse', 'necessary only',
++      'essential only', 'required only', 'learn more', 'more info',
++      'privacy policy', 'cookie policy', 'details'
++    ];
++
++    // Priority 1: "Accept All" / "Allow All" buttons (best match)
++    const priorityTexts = [
++      'accept all', 'allow all', 'accept all cookies', 'allow all cookies',
++      'i accept all', 'agree to all', 'enable all', 'yes, i accept',
++      'accept and continue', 'agree and continue', 'accept & continue'
++    ];
++
++    // Priority 2: Generic accept buttons
++    const acceptTexts = [
++      'accept', 'agree', 'allow', 'i agree', 'i accept', 'got it',
++      'ok', 'okay', 'yes', 'confirm', 'understood', 'i understand'
++    ];
++
++    // Specific framework selectors (known to be accept-all buttons)
++    const frameworkSelectors = [
++      '#onetrust-accept-btn-handler',
++      '#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll',
++      '.CybotCookiebotDialogBodyButtonAccept',
++      '[data-cookiebanner="accept_button"]',
++      '.cc-accept', '.cc-allow',
++      '.cmplz-accept', '#cmplz-accept',
++      '.qc-cmp2-summary-buttons button:first-child',
++      '#sp-cc-accept',
++      '.fc-cta-consent',
++      '.cky-btn-accept'
++    ];
++
++    const isButtonSafe = (text, ariaLabel) => {
++      const combined = (text + ' ' + ariaLabel).toLowerCase();
++      for (const word of rejectWords) {
++        if (combined.includes(word)) return false;
++      }
++      return true;
++    };
++
++    const isVisible = (el) => {
++      const rect = el.getBoundingClientRect();
++      return rect.width > 0 && rect.height > 0 && rect.top < this.contentWindow.innerHeight;
++    };
++
++    try {
++      // First try: Known framework selectors
++      for (const selector of frameworkSelectors) {
++        try {
++          const btn = this.document.querySelector(selector);
++          if (btn && isVisible(btn)) {
++            btn.click();
++            return true;
++          }
++        } catch (e) {}
++      }
++
++      // Gather all clickable elements
++      const allButtons = this.document.querySelectorAll('button, a[role="button"], [role="button"], input[type="button"], input[type="submit"]');
++      let bestMatch = null;
++      let bestPriority = 99;
++
++      for (const btn of allButtons) {
++        if (!isVisible(btn)) continue;
++
++        const text = (btn.textContent || btn.innerText || '').toLowerCase().trim();
++        const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase();
++
++        if (!isButtonSafe(text, ariaLabel)) continue;
++
++        // Check priority 1 matches
++        for (const pattern of priorityTexts) {
++          if (text.includes(pattern) || ariaLabel.includes(pattern)) {
++            if (bestPriority > 1) {
++              bestMatch = btn;
++              bestPriority = 1;
++            }
++            break;
++          }
++        }
++
++        // Check priority 2 matches (only if no priority 1 found)
++        if (bestPriority > 2) {
++          for (const pattern of acceptTexts) {
++            if (text === pattern || ariaLabel === pattern ||
++                text.startsWith(pattern + ' ') || text.endsWith(' ' + pattern)) {
++              bestMatch = btn;
++              bestPriority = 2;
++              break;
++            }
++          }
++        }
++      }
++
++      if (bestMatch) {
++        const text = (bestMatch.textContent || '').toLowerCase().trim().substring(0, 30);
++        bestMatch.click();
++        return true;
++      }
++
++      return false;
++    } catch (e) {
++      return false;
++    }
++  }
++
++  // Find and click a search result
++  clickSearchResult(resultIndex, callback) {
++    try {
++      // Common selectors for search results across different engines
++      const selectors = [
++        // Google
++        'div.g a[href]:not([href*="google"])',
++        'div[data-hveid] a[href^="http"]:not([href*="google"])',
++        // DuckDuckGo
++        'article[data-testid="result"] a[href]',
++        'a.result__a',
++        // Bing
++        'li.b_algo h2 a',
++        'li.b_algo a[href^="http"]',
++        // Brave
++        'div.snippet a[href^="http"]',
++        // Yahoo
++        'div.dd.algo a[href^="http"]',
++        // Ecosia
++        'a.result__link',
++        // Generic fallbacks
++        'main a[href^="http"]:not([href*="search"])',
++        'article a[href^="http"]',
++        '#search a[href^="http"]',
++        '.results a[href^="http"]'
++      ];
++
++      let links = [];
++
++      // Try each selector until we find links
++      for (const selector of selectors) {
++        try {
++          const found = this.document.querySelectorAll(selector);
++          if (found.length > 0) {
++            // Filter out unsafe and non-result links
++            links = Array.from(found).filter(link => {
++              const href = link.href || "";
++              const text = link.textContent || "";
++
++              // Basic checks
++              if (!href.startsWith("http")) return false;
++              if (href.includes("google.com/search")) return false;
++              if (href.includes("bing.com/search")) return false;
++              if (href.includes("duckduckgo.com")) return false;
++              if (href.includes("javascript:")) return false;
++              if (text.length < 5) return false;
++
++              // Safety check
++              if (!this.isUrlSafe(href)) return false;
++
++              return true;
++            });
++
++            if (links.length > 0) break;
++          }
++        } catch (e) {}
++      }
++
++      if (links.length === 0) {
++        callback();
++        return;
++      }
++
++      // Pick target link (bounded by available links)
++      const targetIndex = Math.min(resultIndex, links.length - 1);
++      const targetLink = links[targetIndex];
++
++      // Get link position
++      const rect = targetLink.getBoundingClientRect();
++      const linkX = rect.left + rect.width / 2 + (Math.random() - 0.5) * rect.width * 0.5;
++      const linkY = rect.top + rect.height / 2 + (Math.random() - 0.5) * rect.height * 0.3;
++
++      // Move mouse to link first
++      this.simulateMouseMove(linkX, linkY, 300 + Math.random() * 200, () => {
++        // Small pause before clicking (human hesitation)
++        this.contentWindow.setTimeout(() => {
++          // Dispatch click events
++          this.dispatchMouseEvent("mousedown", linkX, linkY);
++          this.contentWindow.setTimeout(() => {
++            this.dispatchMouseEvent("mouseup", linkX, linkY);
++            this.dispatchMouseEvent("click", linkX, linkY);
++
++            // Actually navigate if event didn't trigger it
++            this.contentWindow.setTimeout(() => {
++              try {
++                targetLink.click();
++              } catch (e) {}
++              callback();
++            }, 100);
++          }, 50 + Math.random() * 100);
++        }, 100 + Math.random() * 200);
++      });
++
++    } catch (e) {
++      callback();
++    }
++  }
++}
+
+--- /dev/null
++++ b/actors/VitaminPoisonParent.sys.mjs
+@@ -0,0 +1,41 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/**
++ * VitaminPoisonParent - Chrome process actor
++ */
++
++export class VitaminPoisonParent extends JSWindowActorParent {
++  receiveMessage(message) {
++    switch (message.name) {
++      case "VitaminPoison:CaptchaDetected":
++        this.handleCaptchaDetected(message.data);
++        break;
++    }
++    return null;
++  }
++
++  handleCaptchaDetected(data) {
++    // CAPTCHA detected and couldn't be solved - close this tab
++    try {
++      const browser = this.browsingContext?.top?.embedderElement;
++      if (!browser) return;
++
++      const win = browser.ownerGlobal;
++      if (!win || !win.gBrowser) return;
++
++      const tab = win.gBrowser.getTabForBrowser(browser);
++      if (tab) {
++        // Close tab after short delay
++        win.setTimeout(() => {
++          try {
++            win.gBrowser.removeTab(tab, { animate: false, skipPermitUnload: true });
++          } catch (e) {}
++        }, 500);
++      }
++    } catch (e) {
++      // Failed to close tab, non-critical
++    }
++  }
++}
+
+--- /dev/null
++++ b/actors/VitaminStartPageChild.sys.mjs
+@@ -0,0 +1,54 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/**
++ * VitaminStartPageChild - Content actor for start page poison indicator
++ * Sets data-poison-active attribute to trigger CSS glow on VITA logo
++ */
++
++export class VitaminStartPageChild extends JSWindowActorChild {
++  actorCreated() {
++    // Request current state when page loads
++    if (this.document.readyState !== "loading") {
++      this.requestState();
++    } else {
++      this.contentWindow.addEventListener("DOMContentLoaded", () => {
++        this.requestState();
++      });
++    }
++  }
++
++  requestState() {
++    // Only request state if this looks like our Vitamin page
++    try {
++      if (this.document.querySelector(".logo-bold")) {
++        this.sendAsyncMessage("VitaminStartPage:RequestState");
++      }
++    } catch (e) {}
++  }
++
++  receiveMessage(message) {
++    switch (message.name) {
++      case "VitaminStartPage:UpdateIndicator":
++        this.updateIndicator(message.data.active);
++        break;
++    }
++    return null;
++  }
++
++  updateIndicator(active) {
++    try {
++      if (!this.document || !this.document.documentElement) return;
++
++      // Set or remove the data attribute - CSS in the page handles the glow
++      if (active) {
++        this.document.documentElement.setAttribute("data-poison-active", "true");
++      } else {
++        this.document.documentElement.removeAttribute("data-poison-active");
++      }
++    } catch (e) {
++      // Update failed, non-critical
++    }
++  }
++}
+
+--- /dev/null
++++ b/actors/VitaminStartPageParent.sys.mjs
+@@ -0,0 +1,55 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/**
++ * VitaminStartPageParent - Parent actor for start page poison indicator
++ * Manages indicator state across all new tab pages
++ */
++
++// Shared state - accessible from VitaminPoison module
++let poisonActive = false;
++
++export function setPoisonActive(active) {
++  poisonActive = active;
++  broadcastToAllStartPages(active);
++}
++
++export function getPoisonActive() {
++  return poisonActive;
++}
++
++function broadcastToAllStartPages(active) {
++  try {
++    const windows = Services.wm.getEnumerator("navigator:browser");
++    while (windows.hasMoreElements()) {
++      const win = windows.getNext();
++      if (!win.gBrowser) continue;
++
++      for (const browser of win.gBrowser.browsers) {
++        try {
++          const actor = browser.browsingContext?.currentWindowGlobal?.getActor("VitaminStartPage");
++          if (actor) {
++            actor.sendAsyncMessage("VitaminStartPage:UpdateIndicator", { active });
++          }
++        } catch (e) {
++          // Actor not available for this browser, skip
++        }
++      }
++    }
++  } catch (e) {
++    // Broadcast failed, non-critical
++  }
++}
++
++export class VitaminStartPageParent extends JSWindowActorParent {
++  receiveMessage(message) {
++    switch (message.name) {
++      case "VitaminStartPage:RequestState":
++        // Child is asking for current state
++        this.sendAsyncMessage("VitaminStartPage:UpdateIndicator", { active: poisonActive });
++        break;
++    }
++    return null;
++  }
++}
+
+--- /dev/null
++++ b/modules/VitaminPoison.sys.mjs
+@@ -0,0 +1,1138 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/**
++ * VitaminPoison - Built-in data poisoning feature for Vitamin Browser
++ * Opens container tabs with fake browsing sessions to pollute tracker profiles
++ * Uses realistic human-like behavior: mouse movements, scrolling, link clicking
++ */
++
++const lazy = {};
++
++ChromeUtils.defineESModuleGetters(lazy, {
++  CustomizableUI: "moz-src:///browser/components/customizableui/CustomizableUI.sys.mjs",
++  ContextualIdentityService: "resource://gre/modules/ContextualIdentityService.sys.mjs",
++});
++
++// Import start page indicator control
++import { setPoisonActive } from "resource:///actors/VitaminStartPageParent.sys.mjs";
++
++const WIDGET_ID = "vitamin-poison-button";
++const CONTAINER_NAME = "Vitamin Poison";
++const CONTAINER_COLOR = "green";
++const CONTAINER_ICON = "fingerprint";
++
++// Default settings
++const DEFAULT_SETTINGS = {
++  frequency: 40,      // seconds between new tabs
++  lifetime: 45,       // seconds before closing tab
++  maxTabs: 2,         // max concurrent tabs
++  engineGoogle: false,
++  engineBing: true,
++  engineYahoo: true,
++  autoStart: false,
++  clickResults: true,
++};
++
++// Preference branch for settings
++const PREF_BRANCH = "vitamin.poison.";
++
++// Search engine URLs (dynamically built from settings)
++const SEARCH_ENGINE_URLS = {
++  google: "https://www.google.com/search?q=",
++  bing: "https://www.bing.com/search?q=",
++  yahoo: "https://search.yahoo.com/search?p=",
++};
++
++// 150+ generic safe search terms to pollute profiles
++const SEARCH_TERMS = [
++  // Health & Fitness
++  "best hiking trails near me", "home workout routines", "yoga for beginners",
++  "healthy breakfast recipes", "how to start running", "meditation techniques",
++  "best stretching exercises", "calorie counting apps", "sleep improvement tips",
++  "stress relief techniques", "vitamins for energy", "posture correction exercises",
++  "healthy meal prep ideas", "beginner gym routine", "walking for weight loss",
++  "how to stay hydrated", "benefits of green tea", "home exercise equipment",
++
++  // Cooking & Food
++  "easy dinner recipes", "vegetarian meal ideas", "how to bake bread",
++  "slow cooker recipes", "budget friendly meals", "meal planning tips",
++  "best kitchen gadgets", "how to cook rice perfectly", "homemade pizza dough",
++  "healthy snack ideas", "breakfast smoothie recipes", "grilling tips for beginners",
++  "food storage containers", "instant pot recipes", "how to meal prep",
++  "baking substitutes", "cast iron skillet care", "knife sharpening guide",
++
++  // Home & Garden
++  "diy home improvement", "gardening for beginners", "indoor plant care",
++  "home organization tips", "how to paint walls", "furniture arrangement ideas",
++  "cleaning schedule template", "best vacuum cleaners", "composting at home",
++  "how to unclog drain", "energy saving tips home", "small space storage",
++  "lawn care basics", "growing vegetables indoors", "home repair basics",
++  "decluttering methods", "natural cleaning products", "pest control natural",
++
++  // Technology & Learning
++  "learn coding online free", "best productivity apps", "how to use excel",
++  "online course recommendations", "typing speed improvement", "computer maintenance tips",
++  "password manager comparison", "cloud storage options", "video editing basics",
++  "podcast recommendations", "audiobook apps", "language learning apps",
++  "keyboard shortcuts windows", "photo editing tutorials", "website building guide",
++  "email organization tips", "digital note taking", "screen time management",
++
++  // Finance & Career
++  "budget planning tips", "how to save money", "investing for beginners",
++  "credit score improvement", "resume writing tips", "job interview preparation",
++  "side hustle ideas", "retirement planning basics", "tax filing tips",
++  "negotiation skills", "work from home tips", "professional networking",
++  "student loan repayment", "emergency fund guide", "frugal living tips",
++  "career change advice", "freelancing beginners", "passive income ideas",
++
++  // Hobbies & Entertainment
++  "how to learn guitar", "photography tutorials", "book recommendations fiction",
++  "board games for adults", "knitting patterns beginners", "watercolor painting basics",
++  "chess strategies beginners", "podcast starting guide", "journaling prompts",
++  "bird watching guide", "fishing for beginners", "camping essentials list",
++  "drawing tutorials easy", "origami instructions", "calligraphy for beginners",
++  "woodworking projects simple", "puzzle solving tips", "magic tricks easy",
++
++  // Travel & Outdoors
++  "budget travel tips", "road trip essentials", "camping gear checklist",
++  "hiking boots reviews", "travel packing tips", "best national parks",
++  "backpacking for beginners", "travel insurance guide", "weekend getaway ideas",
++  "scenic drives near me", "beach vacation essentials", "mountain hiking tips",
++  "travel photography tips", "local attractions nearby", "day trip ideas",
++  "outdoor cooking tips", "stargazing locations", "wildlife watching guide",
++
++  // Pets & Animals
++  "dog training basics", "cat care tips", "pet nutrition guide",
++  "fish tank setup", "bird cage accessories", "hamster care guide",
++  "pet grooming at home", "dog walking tips", "cat toys diy",
++  "pet first aid basics", "adopting a rescue pet", "pet insurance comparison",
++  "puppy training schedule", "indoor cat enrichment", "pet friendly plants",
++
++  // Lifestyle & Wellness
++  "morning routine ideas", "self care practices", "mindfulness exercises",
++  "time management tips", "goal setting methods", "habit tracking apps",
++  "gratitude journaling", "work life balance", "minimalist lifestyle",
++  "digital detox tips", "reading habits improvement", "public speaking tips",
++  "confidence building exercises", "social skills improvement", "memory improvement techniques",
++
++  // Shopping & Reviews
++  "best wireless headphones", "laptop buying guide", "smartphone comparison",
++  "coffee maker reviews", "running shoes comparison", "mattress buying guide",
++  "office chair ergonomic", "standing desk reviews", "water bottle recommendations",
++  "backpack reviews", "sunglasses buying guide", "watch recommendations",
++  "bluetooth speaker reviews", "fitness tracker comparison", "camera buying guide",
++
++  // Seasonal & Events
++  "spring cleaning checklist", "summer activities ideas", "fall home decoration",
++  "winter preparation home", "holiday gift ideas", "birthday party planning",
++  "new year resolutions", "valentine day ideas", "easter crafts simple",
++  "thanksgiving recipes easy", "christmas decoration diy", "halloween costume ideas",
++
++  // Random Knowledge
++  "how does wifi work", "why is sky blue", "how to tie a tie",
++  "history of coffee", "how rainbows form", "interesting science facts",
++  "world geography basics", "famous art paintings", "space exploration news",
++  "ocean conservation tips", "recycling guide", "carbon footprint reduction",
++];
++
++// Sites to visit for additional noise
++const NOISE_SITES = [
++  "https://en.wikipedia.org/wiki/Special:Random",
++  "https://www.reddit.com/r/all/",
++  "https://news.ycombinator.com/",
++  "https://www.bbc.com/news",
++  "https://www.reuters.com/",
++  "https://www.npr.org/",
++  "https://www.theguardian.com/",
++  "https://www.wired.com/",
++  "https://arstechnica.com/",
++  "https://www.smithsonianmag.com/",
++];
++
++// Realistic fingerprint profiles (mainstream browsers, NOT privacy-focused)
++const FINGERPRINT_PROFILES = [
++  // Chrome on Windows 10/11 (most common)
++  {
++    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
++    platform: "Win32",
++    vendor: "Google Inc.",
++    language: "en-US",
++    languages: ["en-US", "en"],
++    screenWidth: 1920,
++    screenHeight: 1080,
++    colorDepth: 24,
++    deviceMemory: 8,
++    hardwareConcurrency: 8,
++    doNotTrack: null,
++  },
++  {
++    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
++    platform: "Win32",
++    vendor: "Google Inc.",
++    language: "en-US",
++    languages: ["en-US", "en"],
++    screenWidth: 1366,
++    screenHeight: 768,
++    colorDepth: 24,
++    deviceMemory: 4,
++    hardwareConcurrency: 4,
++    doNotTrack: null,
++  },
++  {
++    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
++    platform: "Win32",
++    vendor: "Google Inc.",
++    language: "en-US",
++    languages: ["en-US"],
++    screenWidth: 2560,
++    screenHeight: 1440,
++    colorDepth: 24,
++    deviceMemory: 16,
++    hardwareConcurrency: 12,
++    doNotTrack: null,
++  },
++  // Edge on Windows
++  {
++    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0",
++    platform: "Win32",
++    vendor: "Google Inc.",
++    language: "en-US",
++    languages: ["en-US", "en"],
++    screenWidth: 1920,
++    screenHeight: 1080,
++    colorDepth: 24,
++    deviceMemory: 8,
++    hardwareConcurrency: 8,
++    doNotTrack: null,
++  },
++  {
++    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0",
++    platform: "Win32",
++    vendor: "Google Inc.",
++    language: "en-GB",
++    languages: ["en-GB", "en"],
++    screenWidth: 1366,
++    screenHeight: 768,
++    colorDepth: 24,
++    deviceMemory: 4,
++    hardwareConcurrency: 4,
++    doNotTrack: null,
++  },
++  // Chrome on macOS
++  {
++    userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
++    platform: "MacIntel",
++    vendor: "Google Inc.",
++    language: "en-US",
++    languages: ["en-US", "en"],
++    screenWidth: 1440,
++    screenHeight: 900,
++    colorDepth: 30,
++    deviceMemory: 8,
++    hardwareConcurrency: 8,
++    doNotTrack: null,
++  },
++  {
++    userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
++    platform: "MacIntel",
++    vendor: "Google Inc.",
++    language: "en-US",
++    languages: ["en-US"],
++    screenWidth: 2560,
++    screenHeight: 1600,
++    colorDepth: 30,
++    deviceMemory: 16,
++    hardwareConcurrency: 10,
++    doNotTrack: null,
++  },
++  // Safari on macOS
++  {
++    userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15",
++    platform: "MacIntel",
++    vendor: "Apple Computer, Inc.",
++    language: "en-US",
++    languages: ["en-US"],
++    screenWidth: 1440,
++    screenHeight: 900,
++    colorDepth: 30,
++    deviceMemory: undefined, // Safari doesn't expose this
++    hardwareConcurrency: 8,
++    doNotTrack: null,
++  },
++  {
++    userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
++    platform: "MacIntel",
++    vendor: "Apple Computer, Inc.",
++    language: "en-US",
++    languages: ["en-US", "en"],
++    screenWidth: 1680,
++    screenHeight: 1050,
++    colorDepth: 30,
++    deviceMemory: undefined,
++    hardwareConcurrency: 10,
++    doNotTrack: null,
++  },
++  // Chrome on Linux (less common but adds variety)
++  {
++    userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
++    platform: "Linux x86_64",
++    vendor: "Google Inc.",
++    language: "en-US",
++    languages: ["en-US", "en"],
++    screenWidth: 1920,
++    screenHeight: 1080,
++    colorDepth: 24,
++    deviceMemory: 8,
++    hardwareConcurrency: 8,
++    doNotTrack: null,
++  },
++];
++
++// Current fingerprint for this session (randomized per tab)
++let currentFingerprint = null;
++
++let enabled = false;
++let poisonContainerId = null;
++let poisonInterval = null;
++let actorRegistered = false;
++let openPoisonTabs = new Set();
++let currentSettings = { ...DEFAULT_SETTINGS };
++
++// Stats tracking
++const stats = {
++  tabsOpened: 0,
++  searchesPerformed: 0,
++  sitesVisited: 0,
++  linksClicked: 0,
++  sessionStart: null,
++
++  reset() {
++    this.tabsOpened = 0;
++    this.searchesPerformed = 0;
++    this.sitesVisited = 0;
++    this.linksClicked = 0;
++    this.sessionStart = null;
++  },
++
++  getSessionDuration() {
++    if (!this.sessionStart) return "0s";
++    const seconds = Math.floor((Date.now() - this.sessionStart) / 1000);
++    if (seconds < 60) return `${seconds}s`;
++    const minutes = Math.floor(seconds / 60);
++    return `${minutes}m ${seconds % 60}s`;
++  }
++};
++
++export const VitaminPoison = {
++  init() {
++    this.loadSettings();
++    this.registerActor();
++    this.checkFirstRun();
++
++    // Auto-start if enabled
++    if (currentSettings.autoStart) {
++      // Delay auto-start to let browser fully initialize
++      const win = Services.wm.getMostRecentWindow("navigator:browser");
++      if (win) {
++        win.setTimeout(() => {
++          if (!enabled && currentSettings.autoStart) {
++            this.toggle(win);
++          }
++        }, 5000);
++      }
++    }
++
++    try {
++      const self = this;
++
++      lazy.CustomizableUI.createWidget({
++        id: WIDGET_ID,
++        type: "button",
++        label: "Poison",
++        tooltiptext: "Toggle Vitamin Poison - Creates fake browsing sessions to pollute tracker profiles\nRight-click for settings",
++        defaultArea: lazy.CustomizableUI.AREA_NAVBAR,
++
++        onCreated(aNode) {
++          aNode.classList.add("toolbarbutton-1");
++          aNode.setAttribute("image", "chrome://browser/skin/vitamin-poison.svg");
++          aNode.setAttribute("context", "");
++
++          // Right-click opens settings menu
++          aNode.addEventListener("contextmenu", (e) => {
++            e.preventDefault();
++            e.stopPropagation();
++            self.openSettings(aNode.ownerGlobal);
++          });
++        },
++
++        onCommand(aEvent) {
++          self.toggle(aEvent.target.ownerGlobal);
++        },
++      });
++    } catch (e) {
++      console.error("[VitaminPoison] Error creating widget:", e);
++    }
++  },
++
++  toggle(win) {
++    enabled = !enabled;
++
++    if (enabled) {
++      this.startPoisoning(win);
++    } else {
++      this.stopPoisoning(win);
++    }
++
++    this.updateButtonState(win);
++
++    // Update start page indicator via actor system
++    setPoisonActive(enabled);
++  },
++
++  // Check if first run and show welcome page
++  checkFirstRun() {
++    try {
++      const hasRun = Services.prefs.getBoolPref(PREF_BRANCH + "hasRun", false);
++      if (!hasRun) {
++        // Mark as run
++        Services.prefs.setBoolPref(PREF_BRANCH + "hasRun", true);
++
++        // Open welcome page after browser is ready
++        const showWelcome = () => {
++          const win = Services.wm.getMostRecentWindow("navigator:browser");
++          if (win && win.gBrowser) {
++            win.gBrowser.addTab("chrome://browser/content/vitamin-welcome.html", {
++              triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
++              inBackground: false,
++            });
++          } else {
++            // Browser not ready, try again
++            Services.tm.dispatchToMainThread(() => {
++              Services.wm.getMostRecentWindow("navigator:browser")?.setTimeout(showWelcome, 500);
++            });
++          }
++        };
++
++        // Delay to let browser fully initialize
++        Services.tm.dispatchToMainThread(() => {
++          const win = Services.wm.getMostRecentWindow("navigator:browser");
++          if (win) {
++            win.setTimeout(showWelcome, 1500);
++          }
++        });
++      }
++    } catch (e) {
++      // First run check failed, non-critical
++    }
++  },
++
++  // Load settings from preferences
++  loadSettings() {
++    try {
++      currentSettings = {
++        frequency: Services.prefs.getIntPref(PREF_BRANCH + "frequency", DEFAULT_SETTINGS.frequency),
++        lifetime: Services.prefs.getIntPref(PREF_BRANCH + "lifetime", DEFAULT_SETTINGS.lifetime),
++        maxTabs: Services.prefs.getIntPref(PREF_BRANCH + "maxTabs", DEFAULT_SETTINGS.maxTabs),
++        engineGoogle: Services.prefs.getBoolPref(PREF_BRANCH + "engineGoogle", DEFAULT_SETTINGS.engineGoogle),
++        engineBing: Services.prefs.getBoolPref(PREF_BRANCH + "engineBing", DEFAULT_SETTINGS.engineBing),
++        engineYahoo: Services.prefs.getBoolPref(PREF_BRANCH + "engineYahoo", DEFAULT_SETTINGS.engineYahoo),
++        autoStart: Services.prefs.getBoolPref(PREF_BRANCH + "autoStart", DEFAULT_SETTINGS.autoStart),
++        clickResults: Services.prefs.getBoolPref(PREF_BRANCH + "clickResults", DEFAULT_SETTINGS.clickResults),
++      };
++    } catch (e) {
++      currentSettings = { ...DEFAULT_SETTINGS };
++    }
++  },
++
++  // Save settings to preferences
++  saveSettings(settings) {
++    try {
++      Services.prefs.setIntPref(PREF_BRANCH + "frequency", settings.frequency);
++      Services.prefs.setIntPref(PREF_BRANCH + "lifetime", settings.lifetime);
++      Services.prefs.setIntPref(PREF_BRANCH + "maxTabs", settings.maxTabs);
++      Services.prefs.setBoolPref(PREF_BRANCH + "engineGoogle", settings.engineGoogle);
++      Services.prefs.setBoolPref(PREF_BRANCH + "engineBing", settings.engineBing);
++      Services.prefs.setBoolPref(PREF_BRANCH + "engineYahoo", settings.engineYahoo);
++      Services.prefs.setBoolPref(PREF_BRANCH + "autoStart", settings.autoStart);
++      Services.prefs.setBoolPref(PREF_BRANCH + "clickResults", settings.clickResults);
++      currentSettings = { ...settings };
++    } catch (e) {
++      console.error("[VitaminPoison] Failed to save settings:", e);
++    }
++  },
++
++  // Open settings menu
++  openSettings(win) {
++    const self = this;
++    const doc = win.document;
++
++    // Remove existing menu if any
++    let existingMenu = doc.getElementById("vitamin-poison-settings-menu");
++    if (existingMenu) {
++      existingMenu.remove();
++    }
++
++    // Create menupopup
++    const menu = doc.createXULElement("menupopup");
++    menu.id = "vitamin-poison-settings-menu";
++
++    // Helper to create menu item
++    const createItem = (label, type, checked, callback) => {
++      const item = doc.createXULElement("menuitem");
++      item.setAttribute("label", label);
++      if (type === "checkbox") {
++        item.setAttribute("type", "checkbox");
++        item.setAttribute("checked", checked ? "true" : "false");
++        item.addEventListener("command", () => {
++          callback(!checked);
++        });
++      } else {
++        item.addEventListener("command", callback);
++      }
++      return item;
++    };
++
++    // Helper to create separator
++    const createSeparator = () => doc.createXULElement("menuseparator");
++
++    // Helper to create label
++    const createLabel = (text) => {
++      const item = doc.createXULElement("menuitem");
++      item.setAttribute("label", text);
++      item.setAttribute("disabled", "true");
++      item.style.fontWeight = "bold";
++      return item;
++    };
++
++    // Frequency submenu
++    const freqMenu = doc.createXULElement("menu");
++    freqMenu.setAttribute("label", `Frequency: ${currentSettings.frequency}s`);
++    const freqPopup = doc.createXULElement("menupopup");
++    [20, 30, 40, 60, 90, 120].forEach(val => {
++      const item = createItem(`${val} seconds`, null, false, () => {
++        currentSettings.frequency = val;
++        self.saveSettings(currentSettings);
++      });
++      if (val === currentSettings.frequency) item.setAttribute("checked", "true");
++      freqPopup.appendChild(item);
++    });
++    freqMenu.appendChild(freqPopup);
++    menu.appendChild(freqMenu);
++
++    // Lifetime submenu
++    const lifeMenu = doc.createXULElement("menu");
++    lifeMenu.setAttribute("label", `Tab Lifetime: ${currentSettings.lifetime}s`);
++    const lifePopup = doc.createXULElement("menupopup");
++    [20, 30, 45, 60, 90, 120].forEach(val => {
++      const item = createItem(`${val} seconds`, null, false, () => {
++        currentSettings.lifetime = val;
++        self.saveSettings(currentSettings);
++      });
++      if (val === currentSettings.lifetime) item.setAttribute("checked", "true");
++      lifePopup.appendChild(item);
++    });
++    lifeMenu.appendChild(lifePopup);
++    menu.appendChild(lifeMenu);
++
++    // Max tabs submenu
++    const tabsMenu = doc.createXULElement("menu");
++    tabsMenu.setAttribute("label", `Max Tabs: ${currentSettings.maxTabs}`);
++    const tabsPopup = doc.createXULElement("menupopup");
++    [1, 2, 3, 4, 5].forEach(val => {
++      const item = createItem(`${val} tab${val > 1 ? 's' : ''}`, null, false, () => {
++        currentSettings.maxTabs = val;
++        self.saveSettings(currentSettings);
++      });
++      if (val === currentSettings.maxTabs) item.setAttribute("checked", "true");
++      tabsPopup.appendChild(item);
++    });
++    tabsMenu.appendChild(tabsPopup);
++    menu.appendChild(tabsMenu);
++
++    menu.appendChild(createSeparator());
++
++    // Search engines
++    menu.appendChild(createLabel("Search Engines"));
++    menu.appendChild(createItem("Bing", "checkbox", currentSettings.engineBing, (v) => {
++      currentSettings.engineBing = v;
++      self.saveSettings(currentSettings);
++    }));
++    menu.appendChild(createItem("Yahoo", "checkbox", currentSettings.engineYahoo, (v) => {
++      currentSettings.engineYahoo = v;
++      self.saveSettings(currentSettings);
++    }));
++    menu.appendChild(createItem("Google (may trigger CAPTCHA)", "checkbox", currentSettings.engineGoogle, (v) => {
++      currentSettings.engineGoogle = v;
++      self.saveSettings(currentSettings);
++    }));
++
++    menu.appendChild(createSeparator());
++
++    // Behavior
++    menu.appendChild(createLabel("Behavior"));
++    menu.appendChild(createItem("Auto-start on launch", "checkbox", currentSettings.autoStart, (v) => {
++      currentSettings.autoStart = v;
++      self.saveSettings(currentSettings);
++    }));
++    menu.appendChild(createItem("Click search results", "checkbox", currentSettings.clickResults, (v) => {
++      currentSettings.clickResults = v;
++      self.saveSettings(currentSettings);
++    }));
++
++    // Add to document and show
++    doc.getElementById("mainPopupSet").appendChild(menu);
++    const button = doc.getElementById(WIDGET_ID);
++    menu.openPopup(button, "after_end", 0, 0, false, false);
++  },
++
++  // Build search engines list based on settings
++  getActiveSearchEngines() {
++    const engines = [];
++    if (currentSettings.engineBing) {
++      engines.push(SEARCH_ENGINE_URLS.bing);
++      engines.push(SEARCH_ENGINE_URLS.bing); // Weight Bing higher
++    }
++    if (currentSettings.engineYahoo) {
++      engines.push(SEARCH_ENGINE_URLS.yahoo);
++      engines.push(SEARCH_ENGINE_URLS.yahoo); // Weight Yahoo higher
++    }
++    if (currentSettings.engineGoogle) {
++      engines.push(SEARCH_ENGINE_URLS.google); // Google only once (lower weight)
++    }
++    // Fallback if none selected
++    if (engines.length === 0) {
++      engines.push(SEARCH_ENGINE_URLS.bing);
++    }
++    return engines;
++  },
++
++  updateButtonState(win) {
++    const button = win.document.getElementById(WIDGET_ID);
++    if (button) {
++      const icon = button.querySelector(".toolbarbutton-icon");
++
++      if (enabled) {
++        button.setAttribute("checked", "true");
++        if (icon) {
++          icon.style.setProperty("filter", "drop-shadow(0 0 2px #ff8c00)");
++          icon.style.setProperty("fill", "#ff8c00");
++        }
++        this.updateTooltip(button);
++      } else {
++        button.removeAttribute("checked");
++        if (icon) {
++          icon.style.removeProperty("filter");
++          icon.style.removeProperty("fill");
++        }
++        button.setAttribute("tooltiptext", "Toggle Vitamin Poison - Creates fake browsing sessions to pollute tracker profiles");
++      }
++    }
++  },
++
++  updateTooltip(button) {
++    if (!enabled) return;
++    const tooltip = `Vitamin Poison Active (${stats.getSessionDuration()})
++Tabs: ${stats.tabsOpened} | Searches: ${stats.searchesPerformed} | Sites: ${stats.sitesVisited} | Clicks: ${stats.linksClicked}`;
++    button.setAttribute("tooltiptext", tooltip);
++  },
++
++
++  async getOrCreateContainer() {
++    const containers = lazy.ContextualIdentityService.getPublicIdentities();
++    for (const container of containers) {
++      if (container.name === CONTAINER_NAME) {
++        return container.userContextId;
++      }
++    }
++
++    const newContainer = lazy.ContextualIdentityService.create(
++      CONTAINER_NAME,
++      CONTAINER_ICON,
++      CONTAINER_COLOR
++    );
++    return newContainer.userContextId;
++  },
++
++  getRandomItem(arr) {
++    return arr[Math.floor(Math.random() * arr.length)];
++  },
++
++  getRandomFingerprint() {
++    return this.getRandomItem(FINGERPRINT_PROFILES);
++  },
++
++  getRandomSearchUrl() {
++    const engines = this.getActiveSearchEngines();
++    const engine = this.getRandomItem(engines);
++    const term = this.getRandomItem(SEARCH_TERMS);
++    return engine + encodeURIComponent(term);
++  },
++
++  getRandomUrl() {
++    // 75% chance search, 25% chance noise site
++    if (Math.random() < 0.75) {
++      return this.getRandomSearchUrl();
++    }
++    return this.getRandomItem(NOISE_SITES);
++  },
++
++  async openPoisonTab(win) {
++    if (!enabled) return;
++
++    // Check max tabs limit
++    if (openPoisonTabs.size >= currentSettings.maxTabs) {
++      return; // Don't open more tabs
++    }
++
++    try {
++      if (!poisonContainerId) {
++        poisonContainerId = await this.getOrCreateContainer();
++      }
++
++      const url = this.getRandomUrl();
++      const isSearchPage = url.includes("?q=") || url.includes("?p=");
++
++      // Pick a random fingerprint for this tab
++      const fingerprint = this.getRandomFingerprint();
++
++      const tab = win.gBrowser.addTab(url, {
++        triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
++        userContextId: poisonContainerId,
++      });
++
++      // Store fingerprint on tab for later use
++      tab._vitaminFingerprint = fingerprint;
++      openPoisonTabs.add(tab);
++
++      // Update stats
++      stats.tabsOpened++;
++      if (isSearchPage) {
++        stats.searchesPerformed++;
++      } else {
++        stats.sitesVisited++;
++      }
++      this.updateButtonState(win);
++
++      const browser = win.gBrowser.getBrowserForTab(tab);
++      const self = this;
++
++      // Set up User-Agent spoofing for this browser
++      this.setupUserAgentSpoofing(browser, fingerprint);
++
++      const startSimulation = () => {
++        win.setTimeout(() => {
++          self.simulateHumanBehavior(win, browser, tab, isSearchPage, fingerprint);
++        }, 2000);
++      };
++
++      const progressListener = {
++        onStateChange(webProgress, request, flags, status) {
++          if (flags & Ci.nsIWebProgressListener.STATE_STOP &&
++              flags & Ci.nsIWebProgressListener.STATE_IS_WINDOW) {
++            browser.removeProgressListener(progressListener);
++            startSimulation();
++          }
++        },
++        QueryInterface: ChromeUtils.generateQI([
++          "nsIWebProgressListener",
++          "nsISupportsWeakReference",
++        ]),
++      };
++      browser.addProgressListener(progressListener);
++
++      // Use settings for tab lifetime (convert seconds to ms, add variance)
++      const baseLifetime = currentSettings.lifetime * 1000;
++      const closeDelay = baseLifetime * (0.7 + Math.random() * 0.6);
++      win.setTimeout(() => {
++        try {
++          openPoisonTabs.delete(tab);
++          if (tab && !tab.closing) {
++            win.gBrowser.removeTab(tab);
++          }
++        } catch (e) {
++          // Tab already closed
++        }
++      }, closeDelay);
++
++    } catch (e) {
++      console.error("[VitaminPoison] Error opening poison tab:", e);
++    }
++  },
++
++  setupUserAgentSpoofing(browser, fingerprint) {
++    // Use nsIHttpChannel observer to modify User-Agent header
++    try {
++      const dominated = browser.browsingContext?.id;
++      if (!dominated) return;
++
++      // Store the mapping for the HTTP observer
++      if (!this._browserFingerprints) {
++        this._browserFingerprints = new Map();
++        this.registerHttpObserver();
++      }
++      this._browserFingerprints.set(dominated, fingerprint);
++    } catch (e) {}
++  },
++
++  registerHttpObserver() {
++    if (this._httpObserverRegistered) return;
++
++    const self = this;
++    this._httpObserver = {
++      observe(subject, topic, data) {
++        if (topic !== "http-on-modify-request") return;
++
++        try {
++          const channel = subject.QueryInterface(Ci.nsIHttpChannel);
++          const dominated = channel.loadInfo?.browsingContextID;
++
++          if (dominated && self._browserFingerprints?.has(dominated)) {
++            const fp = self._browserFingerprints.get(dominated);
++            channel.setRequestHeader("User-Agent", fp.userAgent, false);
++            // Also set Accept-Language to match
++            channel.setRequestHeader("Accept-Language", fp.language + ",en;q=0.9", false);
++          }
++        } catch (e) {}
++      },
++      QueryInterface: ChromeUtils.generateQI(["nsIObserver"]),
++    };
++
++    Services.obs.addObserver(this._httpObserver, "http-on-modify-request");
++    this._httpObserverRegistered = true;
++  },
++
++  registerActor() {
++    if (actorRegistered) return;
++
++    try {
++      // Register behavior simulation actor (for poison tabs)
++      ChromeUtils.registerWindowActor("VitaminPoison", {
++        parent: {
++          esModuleURI: "resource:///actors/VitaminPoisonParent.sys.mjs",
++        },
++        child: {
++          esModuleURI: "resource:///actors/VitaminPoisonChild.sys.mjs",
++        },
++        allFrames: true,
++      });
++
++      // Register start page indicator actor (for new tab pages)
++      ChromeUtils.registerWindowActor("VitaminStartPage", {
++        parent: {
++          esModuleURI: "resource:///actors/VitaminStartPageParent.sys.mjs",
++        },
++        child: {
++          esModuleURI: "resource:///actors/VitaminStartPageChild.sys.mjs",
++          events: {
++            DOMContentLoaded: { capture: true },
++          },
++        },
++        matches: [
++          "about:home",
++          "about:newtab",
++          "about:welcome",
++          "chrome://browser/content/browser/vitamin-newtab.html",
++        ],
++      });
++
++      actorRegistered = true;
++    } catch (e) {}
++  },
++
++  async simulateHumanBehavior(win, browser, tab, isSearchPage, fingerprint) {
++    try {
++      const browsingContext = browser.browsingContext;
++      if (!browsingContext) return;
++
++      const windowGlobal = browsingContext.currentWindowGlobal;
++      if (!windowGlobal) return;
++
++      const actor = windowGlobal.getActor("VitaminPoison");
++      const shouldClick = currentSettings.clickResults;
++      const behaviorSequence = this.generateBehaviorSequence(isSearchPage, shouldClick);
++
++      // Track if we're clicking a link
++      if (isSearchPage && shouldClick && behaviorSequence.some(a => a.type === "clickSearchResult")) {
++        stats.linksClicked++;
++        this.updateButtonState(win);
++      }
++
++      actor.sendAsyncMessage("VitaminPoison:SimulateBehavior", {
++        sequence: behaviorSequence,
++        isSearchPage,
++        fingerprint // Pass fingerprint for JS property spoofing
++      });
++    } catch (e) {}
++  },
++
++  generateBehaviorSequence(isSearchPage, shouldClick = true) {
++    const sequence = [];
++
++    // 10% chance: Do almost nothing (distracted user)
++    if (Math.random() < 0.1) {
++      sequence.push({ type: "pause", duration: 2000 + Math.random() * 5000 });
++      if (Math.random() < 0.5) {
++        sequence.push({
++          type: "mouseMove",
++          x: 300 + Math.random() * 200,
++          y: 200 + Math.random() * 100,
++          duration: 500
++        });
++      }
++      sequence.push({ type: "pause", duration: 1000 + Math.random() * 3000 });
++      return sequence;
++    }
++
++    // Initial pause - human takes time to see page load
++    sequence.push({
++      type: "pause",
++      duration: 500 + Math.random() * 1500
++    });
++
++    // Mouse movement to center of page
++    sequence.push({
++      type: "mouseMove",
++      x: 400 + Math.random() * 400,
++      y: 300 + Math.random() * 200,
++      duration: 300 + Math.random() * 500
++    });
++
++    // Initial scroll down to see content
++    sequence.push({
++      type: "scroll",
++      amount: 150 + Math.floor(Math.random() * 200),
++      duration: 800 + Math.random() * 400
++    });
++
++    // Reading pause
++    sequence.push({
++      type: "pause",
++      duration: 1000 + Math.random() * 2000
++    });
++
++    // More mouse movements (mimicking reading/scanning)
++    const numMouseMoves = 1 + Math.floor(Math.random() * 3);
++    for (let i = 0; i < numMouseMoves; i++) {
++      sequence.push({
++        type: "mouseMove",
++        x: 200 + Math.random() * 600,
++        y: 200 + Math.random() * 400,
++        duration: 200 + Math.random() * 400
++      });
++
++      sequence.push({
++        type: "pause",
++        duration: 300 + Math.random() * 800
++      });
++    }
++
++    // Scrolling - mix of down and up
++    const numScrolls = 2 + Math.floor(Math.random() * 4);
++    for (let i = 0; i < numScrolls; i++) {
++      // 25% chance to scroll UP (re-reading something)
++      const scrollUp = Math.random() < 0.25;
++      const amount = 100 + Math.floor(Math.random() * 300);
++
++      sequence.push({
++        type: "scroll",
++        amount: scrollUp ? -amount : amount,
++        duration: 600 + Math.random() * 600
++      });
++
++      // Variable pause - sometimes long (reading), sometimes short (scanning)
++      const longPause = Math.random() < 0.3;
++      sequence.push({
++        type: "pause",
++        duration: longPause ? (2000 + Math.random() * 3000) : (500 + Math.random() * 1000)
++      });
++
++      // Occasional mouse movement while scrolling
++      if (Math.random() < 0.4) {
++        sequence.push({
++          type: "mouseMove",
++          x: 150 + Math.random() * 700,
++          y: 250 + Math.random() * 300,
++          duration: 250 + Math.random() * 350
++        });
++      }
++
++      // 15% chance: Random idle moment (user distracted)
++      if (Math.random() < 0.15) {
++        sequence.push({
++          type: "pause",
++          duration: 3000 + Math.random() * 4000
++        });
++      }
++    }
++
++    // If search page and clicking enabled, maybe click a result (70% chance)
++    if (isSearchPage && shouldClick && Math.random() < 0.7) {
++      // Scroll back up a bit first sometimes
++      if (Math.random() < 0.4) {
++        sequence.push({
++          type: "scroll",
++          amount: -(100 + Math.floor(Math.random() * 150)),
++          duration: 400 + Math.random() * 300
++        });
++        sequence.push({
++          type: "pause",
++          duration: 500 + Math.random() * 800
++        });
++      }
++
++      sequence.push({
++        type: "pause",
++        duration: 500 + Math.random() * 1000
++      });
++
++      sequence.push({
++        type: "clickSearchResult",
++        resultIndex: Math.floor(Math.random() * 5)
++      });
++    } else {
++      // Not clicking - just browse and leave
++      // Final scroll (could be up or down)
++      const finalUp = Math.random() < 0.3;
++      sequence.push({
++        type: "scroll",
++        amount: finalUp ? -(50 + Math.random() * 100) : (100 + Math.random() * 200),
++        duration: 500 + Math.random() * 500
++      });
++
++      sequence.push({
++        type: "pause",
++        duration: 1000 + Math.random() * 2000
++      });
++    }
++
++    return sequence;
++  },
++
++  showNotification(win, message) {
++    try {
++      const notificationBox = win.gBrowser.getNotificationBox();
++
++      const existing = notificationBox.getNotificationWithValue("vitamin-poison-notification");
++      if (existing) {
++        notificationBox.removeNotification(existing);
++      }
++
++      const notification = notificationBox.appendNotification(
++        "vitamin-poison-notification",
++        {
++          label: message,
++          priority: notificationBox.PRIORITY_INFO_MEDIUM,
++        },
++        null
++      );
++
++      win.setTimeout(() => {
++        try {
++          if (notification && notification.parentNode) {
++            notificationBox.removeNotification(notification);
++          }
++        } catch (e) {}
++      }, 3000);
++    } catch (e) {}
++  },
++
++  async startPoisoning(win) {
++    stats.reset();
++    stats.sessionStart = Date.now();
++
++    await this.openPoisonTab(win);
++
++    // Use settings for frequency (convert seconds to ms, add randomness)
++    const baseInterval = currentSettings.frequency * 1000;
++    const scheduleNext = () => {
++      if (!enabled) return;
++      const interval = baseInterval * (0.7 + Math.random() * 0.6); // +/- 30% variance
++      poisonInterval = win.setTimeout(() => {
++        if (enabled) {
++          this.openPoisonTab(win);
++          scheduleNext();
++        }
++      }, interval);
++    };
++    scheduleNext();
++
++    this.showNotification(win, "Vitamin Poison activated - Polluting tracker profiles");
++  },
++
++  async stopPoisoning(win) {
++    // Clear the timeout
++    if (poisonInterval) {
++      try {
++        win.clearTimeout(poisonInterval);
++      } catch (e) {
++        try {
++          Services.wm.getMostRecentWindow("navigator:browser").clearTimeout(poisonInterval);
++        } catch (e2) {}
++      }
++      poisonInterval = null;
++    }
++
++    // Close poison tabs in a window
++    const closePoisonTabs = (targetWin) => {
++      if (!targetWin || !targetWin.gBrowser) return 0;
++
++      let closed = 0;
++      const tabsToCheck = Array.from(targetWin.gBrowser.tabs).reverse();
++
++      for (const tab of tabsToCheck) {
++        try {
++          const attrId = tab.getAttribute("usercontextid");
++          const attrIdNum = attrId ? parseInt(attrId, 10) : null;
++          const propIdNum = tab.userContextId;
++          const isTracked = openPoisonTabs.has(tab);
++
++          const shouldClose = isTracked ||
++            (poisonContainerId && attrIdNum === poisonContainerId) ||
++            (poisonContainerId && propIdNum === poisonContainerId);
++
++          if (shouldClose) {
++            targetWin.gBrowser.removeTab(tab, { animate: false, skipPermitUnload: true });
++            closed++;
++          }
++        } catch (e) {}
++      }
++      return closed;
++    };
++
++    // Close in current window
++    let totalClosed = closePoisonTabs(win);
++
++    // Check all other windows
++    try {
++      const windows = Services.wm.getEnumerator("navigator:browser");
++      while (windows.hasMoreElements()) {
++        const browserWin = windows.getNext();
++        if (browserWin !== win) {
++          totalClosed += closePoisonTabs(browserWin);
++        }
++      }
++    } catch (e) {}
++
++    openPoisonTabs.clear();
++
++    // Clear fingerprint mappings
++    if (this._browserFingerprints) {
++      this._browserFingerprints.clear();
++    }
++
++    // Show summary notification
++    if (win) {
++      const msg = `Poison stopped - ${stats.tabsOpened} tabs, ${stats.searchesPerformed} searches, ${stats.sitesVisited} sites (${stats.getSessionDuration()})`;
++      this.showNotification(win, msg);
++    }
++  },
++
++  uninit() {
++    this.stopPoisoning();
++    try {
++      lazy.CustomizableUI.destroyWidget(WIDGET_ID);
++    } catch (e) {}
++  }
++};
+
+--- /dev/null
++++ b/chrome/browser/content/browser/vitamin-newtab.html
+@@ -0,0 +1,61 @@
++<!-- Vitamin Browser - New Tab Page -->
++<!doctype html>
++<html>
++  <head>
++    <meta charset="utf-8" />
++    <meta http-equiv="Content-Security-Policy" content="default-src chrome:; img-src chrome: blob:; object-src 'none'; style-src 'unsafe-inline'; form-action https:;" />
++    <meta name="color-scheme" content="light dark" />
++    <meta name="viewport" content="width=device-width, initial-scale=1" />
++    <title>New Tab</title>
++    <link rel="icon" type="image/png" href="chrome://branding/content/icon32.png" />
++    <style>
++      *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
++      :root { --accent: #ff6b00; --accent-light: #ff8533; }
++      html, body { width: 100%; height: 100%; overflow: hidden; }
++      body { margin: 0; padding: 0; background: #0a0a0a; display: flex; align-items: center; justify-content: center; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif; position: relative; min-height: 100vh; }
++      .glow { position: absolute; border-radius: 50%; filter: blur(120px); opacity: 0.15; pointer-events: none; }
++      .glow-1 { width: 600px; height: 600px; background: var(--accent); top: -200px; right: -100px; animation: drift1 25s ease-in-out infinite; }
++      .glow-2 { width: 400px; height: 400px; background: var(--accent-light); bottom: -150px; left: -100px; animation: drift2 30s ease-in-out infinite; }
++      .glow-3 { width: 300px; height: 300px; background: var(--accent); top: 50%; left: 50%; transform: translate(-50%, -50%); opacity: 0.08; animation: pulse 20s ease-in-out infinite; }
++      @keyframes drift1 { 0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.15; } 25% { transform: translate(-80px, 60px) scale(1.1); opacity: 0.12; } 50% { transform: translate(-40px, 100px) scale(0.95); opacity: 0.18; } 75% { transform: translate(40px, 40px) scale(1.05); opacity: 0.13; } }
++      @keyframes drift2 { 0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.15; } 33% { transform: translate(100px, -60px) scale(1.15); opacity: 0.12; } 66% { transform: translate(50px, -100px) scale(0.9); opacity: 0.17; } }
++      @keyframes pulse { 0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 0.08; } 50% { transform: translate(-50%, -50%) scale(1.3); opacity: 0.05; } }
++      .container { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; gap: 40px; }
++      .logo { font-size: 14px; letter-spacing: 8px; text-transform: uppercase; color: #333; user-select: none; }
++      .logo-bold { font-weight: 700; color: #444; transition: color 0.5s ease, text-shadow 0.5s ease; cursor: default; }
++      .logo-light { font-weight: 400; }
++      .logo-bold:hover { color: #ff6b00; text-shadow: 0 0 5px #ff6b00, 0 0 10px #ff6b00, 0 0 20px #ff8533; }
++      /* Poison active indicator - controlled by parent process via data attribute */
++      html[data-poison-active] .logo-bold {
++        color: #ff6b00;
++        text-shadow: 0 0 5px #ff6b00, 0 0 15px #ff6b00, 0 0 30px #ff8533, 0 0 50px #ff6b00;
++        animation: poison-pulse 2s ease-in-out infinite;
++      }
++      @keyframes poison-pulse {
++        0%, 100% { text-shadow: 0 0 5px #ff6b00, 0 0 15px #ff6b00, 0 0 30px #ff8533, 0 0 50px #ff6b00; }
++        50% { text-shadow: 0 0 10px #ff6b00, 0 0 25px #ff6b00, 0 0 45px #ff8533, 0 0 70px #ff6b00; }
++      }
++      .search-inner-wrapper { position: relative; width: 580px; max-width: calc(100vw - 40px); }
++      .search-box-wrapper { position: relative; width: 100%; }
++      .search-box { width: 100%; height: 52px; padding: 0 24px 0 52px; border: 1px solid #1a1a1a; border-radius: 16px; background: rgba(20, 20, 20, 0.8); backdrop-filter: blur(20px); color: #fff; font-size: 15px; font-family: inherit; transition: all 0.2s ease; }
++      .search-box:focus { outline: none; border-color: var(--accent); background: rgba(25, 25, 25, 0.9); box-shadow: 0 0 0 4px rgba(255, 107, 0, 0.15); }
++      .search-box::placeholder { color: #555; }
++      .search-icon { position: absolute; left: 18px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; color: #555; pointer-events: none; transition: color 0.2s ease; }
++      .search-box:focus + .search-icon { color: var(--accent); }
++    </style>
++  </head>
++  <body>
++    <div class="glow glow-1"></div>
++    <div class="glow glow-2"></div>
++    <div class="glow glow-3"></div>
++    <div class="container">
++      <div class="logo"><span class="logo-bold">Vita</span><span class="logo-light">min</span></div>
++      <form class="search-inner-wrapper" action="https://duckduckgo.com/" method="get">
++        <div class="search-box-wrapper">
++          <input type="text" name="q" class="search-box" placeholder="Search with DuckDuckGo" autocomplete="off" autofocus />
++          <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
++        </div>
++      </form>
++    </div>
++  </body>
++</html>
+
+--- /dev/null
++++ b/chrome/browser/content/browser/vitamin-welcome.html
+@@ -0,0 +1,301 @@
++<!DOCTYPE html>
++<html>
++<head>
++  <meta charset="utf-8">
++  <meta name="color-scheme" content="dark">
++  <title>Welcome to Vitamin</title>
++  <style>
++    * { margin: 0; padding: 0; box-sizing: border-box; }
++    :root { --accent: #ff6b00; --accent-light: #ff8533; }
++
++    body {
++      min-height: 100vh;
++      background: #0a0a0a;
++      color: #e0e0e0;
++      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', system-ui, sans-serif;
++      line-height: 1.6;
++      padding: 60px 20px;
++    }
++
++    .container {
++      max-width: 680px;
++      margin: 0 auto;
++    }
++
++    .logo {
++      font-size: 42px;
++      letter-spacing: 6px;
++      text-transform: uppercase;
++      margin-bottom: 8px;
++    }
++
++    .logo-bold {
++      font-weight: 700;
++      color: var(--accent);
++      text-shadow: 0 0 20px rgba(255, 107, 0, 0.5);
++    }
++
++    .logo-light {
++      font-weight: 300;
++      color: #666;
++    }
++
++    .tagline {
++      color: #666;
++      font-size: 18px;
++      margin-bottom: 50px;
++    }
++
++    h2 {
++      font-size: 24px;
++      font-weight: 600;
++      color: #fff;
++      margin: 40px 0 16px 0;
++    }
++
++    p {
++      color: #aaa;
++      font-size: 16px;
++      margin-bottom: 16px;
++    }
++
++    .feature {
++      background: #111;
++      border: 1px solid #222;
++      border-radius: 12px;
++      padding: 24px;
++      margin: 20px 0;
++    }
++
++    .feature-header {
++      display: flex;
++      align-items: center;
++      gap: 12px;
++      margin-bottom: 12px;
++    }
++
++    .feature-icon {
++      width: 40px;
++      height: 40px;
++      background: linear-gradient(135deg, var(--accent), var(--accent-light));
++      border-radius: 10px;
++      display: flex;
++      align-items: center;
++      justify-content: center;
++      font-size: 20px;
++    }
++
++    .feature h3 {
++      font-size: 18px;
++      font-weight: 600;
++      color: #fff;
++    }
++
++    .feature p {
++      margin: 0;
++      color: #888;
++    }
++
++    .steps {
++      counter-reset: step;
++      list-style: none;
++      padding: 0;
++    }
++
++    .steps li {
++      position: relative;
++      padding-left: 50px;
++      margin-bottom: 20px;
++      color: #aaa;
++    }
++
++    .steps li::before {
++      counter-increment: step;
++      content: counter(step);
++      position: absolute;
++      left: 0;
++      top: 0;
++      width: 32px;
++      height: 32px;
++      background: var(--accent);
++      color: #000;
++      font-weight: 700;
++      border-radius: 50%;
++      display: flex;
++      align-items: center;
++      justify-content: center;
++      font-size: 14px;
++    }
++
++    .steps strong {
++      color: #fff;
++    }
++
++    .pill-demo {
++      display: inline-flex;
++      align-items: center;
++      gap: 8px;
++      background: #1a1a1a;
++      border: 1px solid #333;
++      border-radius: 6px;
++      padding: 6px 12px;
++      margin: 4px 0;
++    }
++
++    .pill-icon {
++      width: 16px;
++      height: 16px;
++      background: #888;
++      border-radius: 8px;
++      position: relative;
++    }
++
++    .pill-icon::after {
++      content: '';
++      position: absolute;
++      top: 0;
++      left: 0;
++      width: 8px;
++      height: 16px;
++      background: #666;
++      border-radius: 8px 0 0 8px;
++    }
++
++    .pill-icon.active {
++      background: var(--accent);
++      box-shadow: 0 0 8px var(--accent);
++    }
++
++    .pill-icon.active::after {
++      background: var(--accent-light);
++    }
++
++    .cta {
++      margin-top: 50px;
++      text-align: center;
++    }
++
++    .cta-button {
++      display: inline-block;
++      background: var(--accent);
++      color: #000;
++      font-size: 16px;
++      font-weight: 600;
++      padding: 14px 32px;
++      border-radius: 8px;
++      text-decoration: none;
++      transition: all 0.2s;
++    }
++
++    .cta-button:hover {
++      background: var(--accent-light);
++      transform: translateY(-2px);
++      box-shadow: 0 4px 20px rgba(255, 107, 0, 0.3);
++    }
++
++    .footer {
++      margin-top: 60px;
++      padding-top: 30px;
++      border-top: 1px solid #222;
++      text-align: center;
++      color: #555;
++      font-size: 14px;
++    }
++
++    .highlight {
++      color: var(--accent);
++    }
++
++    code {
++      background: #1a1a1a;
++      padding: 2px 6px;
++      border-radius: 4px;
++      font-family: 'SF Mono', Monaco, monospace;
++      font-size: 14px;
++      color: var(--accent);
++    }
++  </style>
++</head>
++<body>
++  <div class="container">
++    <div class="logo">
++      <span class="logo-bold">Vita</span><span class="logo-light">min</span>
++    </div>
++    <div class="tagline">Privacy-first browsing with built-in data poisoning</div>
++
++    <h2>What is Vitamin?</h2>
++    <p>
++      Vitamin is a privacy-focused browser built on LibreWolf. It includes all the privacy
++      protections you'd expect, plus something unique: <strong class="highlight">Data Poisoning</strong>.
++    </p>
++
++    <div class="feature">
++      <div class="feature-header">
++        <div class="feature-icon">💊</div>
++        <h3>Data Poisoning</h3>
++      </div>
++      <p>
++        Trackers build profiles on you based on your browsing. Vitamin fights back by
++        generating fake browsing activity in the background — polluting your tracker
++        profile with garbage data, making it useless for targeting you.
++      </p>
++    </div>
++
++    <h2>How It Works</h2>
++    <p>
++      When you activate the poison feature, Vitamin opens background tabs that simulate
++      realistic human browsing — searches, clicks, scrolling — all with randomized
++      fingerprints that look like different browsers and devices.
++    </p>
++    <p>
++      Trackers see this activity and add it to your profile. But since it's fake and
++      random, your real interests get buried in noise. Ad targeting becomes useless.
++    </p>
++
++    <h2>Using the Poison Button</h2>
++    <p>Look for the <span class="pill-demo"><span class="pill-icon"></span> pill icon</span> in your toolbar.</p>
++
++    <ol class="steps">
++      <li>
++        <strong>Click once</strong> to toggle poison on/off. When active, the icon
++        <span class="pill-demo"><span class="pill-icon active"></span> glows orange</span>.
++      </li>
++      <li>
++        <strong>Right-click</strong> to open settings — adjust frequency, max tabs,
++        search engines, and more.
++      </li>
++      <li>
++        <strong>Hover</strong> over the button to see live stats: tabs opened,
++        searches performed, sites visited.
++      </li>
++    </ol>
++
++    <div class="feature">
++      <div class="feature-header">
++        <div class="feature-icon">⚙️</div>
++        <h3>Settings</h3>
++      </div>
++      <p>
++        Right-click the pill button to customize: how often new tabs open, how many
++        run at once, which search engines to use (Bing and Yahoo are recommended —
++        Google may trigger CAPTCHAs), and whether to auto-start on browser launch.
++      </p>
++    </div>
++
++    <h2>Tips</h2>
++    <p>
++      • <strong>Let it run in the background</strong> — the longer it runs, the more noise in your profile<br>
++      • <strong>Use alongside your normal browsing</strong> — your real activity mixes with fake data<br>
++      • <strong>Don't worry about the tabs</strong> — they open in isolated containers and close automatically
++    </p>
++
++    <div class="cta">
++      <a href="#" class="cta-button" onclick="window.close(); return false;">Get Started</a>
++    </div>
++
++    <div class="footer">
++      Vitamin Browser — Take back your privacy
++    </div>
++  </div>
++</body>
++</html>
+
+--- /dev/null
++++ b/chrome/browser/content/browser/vitamin-poison-settings.html
+@@ -0,0 +1,302 @@
++<!DOCTYPE html>
++<html>
++<head>
++  <meta charset="utf-8">
++  <meta name="color-scheme" content="light dark">
++  <style>
++    :root {
++      --bg: #1a1a1a;
++      --bg-hover: #252525;
++      --text: #e0e0e0;
++      --text-dim: #888;
++      --accent: #ff8c00;
++      --border: #333;
++    }
++    * { box-sizing: border-box; margin: 0; padding: 0; }
++    body {
++      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
++      font-size: 13px;
++      background: var(--bg);
++      color: var(--text);
++      padding: 16px;
++      min-width: 280px;
++    }
++    h2 {
++      font-size: 14px;
++      font-weight: 600;
++      margin-bottom: 16px;
++      color: var(--accent);
++      display: flex;
++      align-items: center;
++      gap: 8px;
++    }
++    .setting {
++      margin-bottom: 16px;
++    }
++    .setting:last-child {
++      margin-bottom: 0;
++    }
++    label {
++      display: block;
++      margin-bottom: 6px;
++      font-weight: 500;
++    }
++    .hint {
++      font-size: 11px;
++      color: var(--text-dim);
++      margin-top: 4px;
++    }
++    input[type="range"] {
++      width: 100%;
++      height: 4px;
++      -webkit-appearance: none;
++      background: var(--border);
++      border-radius: 2px;
++      outline: none;
++    }
++    input[type="range"]::-webkit-slider-thumb {
++      -webkit-appearance: none;
++      width: 16px;
++      height: 16px;
++      background: var(--accent);
++      border-radius: 50%;
++      cursor: pointer;
++    }
++    input[type="range"]::-moz-range-thumb {
++      width: 16px;
++      height: 16px;
++      background: var(--accent);
++      border-radius: 50%;
++      cursor: pointer;
++      border: none;
++    }
++    .range-value {
++      display: inline-block;
++      min-width: 50px;
++      text-align: right;
++      color: var(--accent);
++      font-weight: 600;
++    }
++    .range-row {
++      display: flex;
++      align-items: center;
++      gap: 12px;
++    }
++    .toggle-row {
++      display: flex;
++      justify-content: space-between;
++      align-items: center;
++      padding: 8px 0;
++      border-bottom: 1px solid var(--border);
++    }
++    .toggle-row:last-child {
++      border-bottom: none;
++    }
++    .toggle {
++      position: relative;
++      width: 40px;
++      height: 22px;
++    }
++    .toggle input {
++      opacity: 0;
++      width: 0;
++      height: 0;
++    }
++    .toggle-slider {
++      position: absolute;
++      cursor: pointer;
++      top: 0; left: 0; right: 0; bottom: 0;
++      background: var(--border);
++      border-radius: 11px;
++      transition: 0.2s;
++    }
++    .toggle-slider:before {
++      position: absolute;
++      content: "";
++      height: 16px;
++      width: 16px;
++      left: 3px;
++      bottom: 3px;
++      background: #666;
++      border-radius: 50%;
++      transition: 0.2s;
++    }
++    .toggle input:checked + .toggle-slider {
++      background: var(--accent);
++    }
++    .toggle input:checked + .toggle-slider:before {
++      transform: translateX(18px);
++      background: white;
++    }
++    .section {
++      margin-bottom: 20px;
++      padding-bottom: 16px;
++      border-bottom: 1px solid var(--border);
++    }
++    .section:last-child {
++      border-bottom: none;
++      margin-bottom: 0;
++      padding-bottom: 0;
++    }
++    .section-title {
++      font-size: 11px;
++      text-transform: uppercase;
++      letter-spacing: 0.5px;
++      color: var(--text-dim);
++      margin-bottom: 12px;
++    }
++    button {
++      width: 100%;
++      padding: 10px;
++      background: var(--accent);
++      color: white;
++      border: none;
++      border-radius: 6px;
++      font-size: 13px;
++      font-weight: 600;
++      cursor: pointer;
++      margin-top: 16px;
++    }
++    button:hover {
++      filter: brightness(1.1);
++    }
++  </style>
++</head>
++<body>
++  <h2>Poison Settings</h2>
++
++  <div class="section">
++    <div class="section-title">Timing</div>
++
++    <div class="setting">
++      <label>New Tab Frequency</label>
++      <div class="range-row">
++        <input type="range" id="frequency" min="15" max="120" value="40">
++        <span class="range-value" id="frequency-value">40s</span>
++      </div>
++      <div class="hint">How often to open new poison tabs</div>
++    </div>
++
++    <div class="setting">
++      <label>Tab Lifetime</label>
++      <div class="range-row">
++        <input type="range" id="lifetime" min="15" max="120" value="45">
++        <span class="range-value" id="lifetime-value">45s</span>
++      </div>
++      <div class="hint">How long each tab stays open</div>
++    </div>
++
++    <div class="setting">
++      <label>Max Concurrent Tabs</label>
++      <div class="range-row">
++        <input type="range" id="maxTabs" min="1" max="5" value="2">
++        <span class="range-value" id="maxTabs-value">2</span>
++      </div>
++      <div class="hint">Maximum poison tabs open at once</div>
++    </div>
++  </div>
++
++  <div class="section">
++    <div class="section-title">Search Engines</div>
++    <div class="toggle-row">
++      <span>Google</span>
++      <label class="toggle">
++        <input type="checkbox" id="engine-google">
++        <span class="toggle-slider"></span>
++      </label>
++    </div>
++    <div class="toggle-row">
++      <span>Bing</span>
++      <label class="toggle">
++        <input type="checkbox" id="engine-bing" checked>
++        <span class="toggle-slider"></span>
++      </label>
++    </div>
++    <div class="toggle-row">
++      <span>Yahoo</span>
++      <label class="toggle">
++        <input type="checkbox" id="engine-yahoo" checked>
++        <span class="toggle-slider"></span>
++      </label>
++    </div>
++    <div class="hint">Google may trigger CAPTCHAs with frequent use</div>
++  </div>
++
++  <div class="section">
++    <div class="section-title">Behavior</div>
++    <div class="toggle-row">
++      <span>Auto-start on launch</span>
++      <label class="toggle">
++        <input type="checkbox" id="autoStart">
++        <span class="toggle-slider"></span>
++      </label>
++    </div>
++    <div class="toggle-row">
++      <span>Click search results</span>
++      <label class="toggle">
++        <input type="checkbox" id="clickResults" checked>
++        <span class="toggle-slider"></span>
++      </label>
++    </div>
++  </div>
++
++  <button id="save">Save Settings</button>
++
++  <script>
++    function initSettings() {
++      // Get settings from bridge
++      const settings = window.VitaminPoisonBridge?.getSettings() || {};
++
++      // Populate form
++      document.getElementById('frequency').value = settings.frequency || 40;
++      document.getElementById('lifetime').value = settings.lifetime || 45;
++      document.getElementById('maxTabs').value = settings.maxTabs || 2;
++      document.getElementById('engine-google').checked = settings.engineGoogle ?? false;
++      document.getElementById('engine-bing').checked = settings.engineBing ?? true;
++      document.getElementById('engine-yahoo').checked = settings.engineYahoo ?? true;
++      document.getElementById('autoStart').checked = settings.autoStart ?? false;
++      document.getElementById('clickResults').checked = settings.clickResults ?? true;
++
++      updateValues();
++    }
++
++    // Update displayed values
++    function updateValues() {
++      document.getElementById('frequency-value').textContent = document.getElementById('frequency').value + 's';
++      document.getElementById('lifetime-value').textContent = document.getElementById('lifetime').value + 's';
++      document.getElementById('maxTabs-value').textContent = document.getElementById('maxTabs').value;
++    }
++
++    document.getElementById('frequency').addEventListener('input', updateValues);
++    document.getElementById('lifetime').addEventListener('input', updateValues);
++    document.getElementById('maxTabs').addEventListener('input', updateValues);
++
++    // Save
++    document.getElementById('save').addEventListener('click', () => {
++      const newSettings = {
++        frequency: parseInt(document.getElementById('frequency').value),
++        lifetime: parseInt(document.getElementById('lifetime').value),
++        maxTabs: parseInt(document.getElementById('maxTabs').value),
++        engineGoogle: document.getElementById('engine-google').checked,
++        engineBing: document.getElementById('engine-bing').checked,
++        engineYahoo: document.getElementById('engine-yahoo').checked,
++        autoStart: document.getElementById('autoStart').checked,
++        clickResults: document.getElementById('clickResults').checked,
++      };
++
++      // Send to parent via bridge
++      if (window.VitaminPoisonBridge) {
++        window.VitaminPoisonBridge.saveSettings(newSettings);
++      }
++    });
++
++    // Init on load or when bridge becomes available
++    if (window.VitaminPoisonBridge) {
++      initSettings();
++    }
++
++    // Expose for parent to call
++    window.initSettings = initSettings;
++  </script>
++</body>
++</html>
+
+--- /dev/null
++++ b/chrome/browser/content/browser/vitamin-poison-content.js
+@@ -0,0 +1,32 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++// VitaminPoison content script - runs in content process
++// Handles scroll simulation for poisoning
++
++/* eslint-env mozilla/frame-script */
++
++addMessageListener("VitaminPoison:Scroll", function(message) {
++  const { scrollAmount } = message.data;
++  content.window.scrollBy({ top: scrollAmount, behavior: 'smooth' });
++});
++
++addMessageListener("VitaminPoison:ScrollSequence", function(message) {
++  const { scrolls } = message.data;
++  let index = 0;
++
++  function doNextScroll() {
++    if (index >= scrolls.length) return;
++
++    const { amount, delay } = scrolls[index];
++    content.window.scrollBy({ top: amount, behavior: 'smooth' });
++    index++;
++
++    if (index < scrolls.length) {
++      content.setTimeout(doNextScroll, delay);
++    }
++  }
++
++  doNextScroll();
++});
+
+--- /dev/null
++++ b/chrome/browser/content/browser/vitaminpoison.css
+@@ -0,0 +1,13 @@
++/* Vitamin Poison Toolbar Button Styles */
++
++#vitamin-poison-button {
++  list-style-image: url("chrome://browser/skin/vitamin-poison.svg");
++}
++
++#vitamin-poison-button[data-poison-active="true"] {
++  list-style-image: url("chrome://browser/skin/vitamin-poison-active.svg");
++}
++
++#vitamin-poison-button[data-poison-active="true"] .toolbarbutton-icon {
++  filter: drop-shadow(0 0 4px #4ade80);
++}
+
+--- /dev/null
++++ b/chrome/browser/skin/classic/browser/vitamin-poison.svg
+@@ -0,0 +1,9 @@
++<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
++  <!-- Two-tone circular pill -->
++  <!-- Left half (darker/filled) -->
++  <path d="M8 1 A7 7 0 0 0 8 15 L8 1 Z" fill="context-fill" fill-opacity="context-fill-opacity"/>
++  <!-- Right half (lighter/outline only) -->
++  <path d="M8 1 A7 7 0 0 1 8 15" fill="none" stroke="context-fill" stroke-opacity="context-fill-opacity" stroke-width="1.5"/>
++  <!-- Divider line -->
++  <line x1="8" y1="1" x2="8" y2="15" stroke="context-fill" stroke-opacity="0.3" stroke-width="0.5"/>
++</svg>
+
+--- /dev/null
++++ b/chrome/browser/skin/classic/browser/vitamin-poison-active.svg
+@@ -0,0 +1,9 @@
++<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
++  <!-- Flask body -->
++  <path fill="#4ade80" d="M5 2h6v2h1v1h-1v3l2 5v1H3v-1l2-5V5H4V4h1V2zm1 1v3.5L4.5 12h7L10 6.5V3H6z"/>
++  <!-- Liquid (bright green) -->
++  <path fill="#22c55e" d="M5.5 10h5l.5 1.5v.5h-6v-.5L5.5 10z"/>
++  <!-- Bubbles -->
++  <circle cx="7" cy="11" r="0.5" fill="#86efac"/>
++  <circle cx="9" cy="10.5" r="0.4" fill="#86efac"/>
++</svg>
+

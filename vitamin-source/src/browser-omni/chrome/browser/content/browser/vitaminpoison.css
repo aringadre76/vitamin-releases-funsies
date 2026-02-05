@@ -1,0 +1,13 @@
+/* Vitamin Poison Toolbar Button Styles */
+
+#vitamin-poison-button {
+  list-style-image: url("chrome://browser/skin/vitamin-poison.svg");
+}
+
+#vitamin-poison-button[data-poison-active="true"] {
+  list-style-image: url("chrome://browser/skin/vitamin-poison-active.svg");
+}
+
+#vitamin-poison-button[data-poison-active="true"] .toolbarbutton-icon {
+  filter: drop-shadow(0 0 4px #4ade80);
+}

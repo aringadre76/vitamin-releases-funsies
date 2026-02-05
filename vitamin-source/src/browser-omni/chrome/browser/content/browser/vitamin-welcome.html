@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="color-scheme" content="dark">
+  <title>Welcome to Vitamin</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root { --accent: #ff6b00; --accent-light: #ff8533; }
+
+    body {
+      min-height: 100vh;
+      background: #0a0a0a;
+      color: #e0e0e0;
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', system-ui, sans-serif;
+      line-height: 1.6;
+      padding: 60px 20px;
+    }
+
+    .container {
+      max-width: 680px;
+      margin: 0 auto;
+    }
+
+    .logo {
+      font-size: 42px;
+      letter-spacing: 6px;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+
+    .logo-bold {
+      font-weight: 700;
+      color: var(--accent);
+      text-shadow: 0 0 20px rgba(255, 107, 0, 0.5);
+    }
+
+    .logo-light {
+      font-weight: 300;
+      color: #666;
+    }
+
+    .tagline {
+      color: #666;
+      font-size: 18px;
+      margin-bottom: 50px;
+    }
+
+    h2 {
+      font-size: 24px;
+      font-weight: 600;
+      color: #fff;
+      margin: 40px 0 16px 0;
+    }
+
+    p {
+      color: #aaa;
+      font-size: 16px;
+      margin-bottom: 16px;
+    }
+
+    .feature {
+      background: #111;
+      border: 1px solid #222;
+      border-radius: 12px;
+      padding: 24px;
+      margin: 20px 0;
+    }
+
+    .feature-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .feature-icon {
+      width: 40px;
+      height: 40px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-light));
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+    }
+
+    .feature h3 {
+      font-size: 18px;
+      font-weight: 600;
+      color: #fff;
+    }
+
+    .feature p {
+      margin: 0;
+      color: #888;
+    }
+
+    .steps {
+      counter-reset: step;
+      list-style: none;
+      padding: 0;
+    }
+
+    .steps li {
+      position: relative;
+      padding-left: 50px;
+      margin-bottom: 20px;
+      color: #aaa;
+    }
+
+    .steps li::before {
+      counter-increment: step;
+      content: counter(step);
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 32px;
+      height: 32px;
+      background: var(--accent);
+      color: #000;
+      font-weight: 700;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+    }
+
+    .steps strong {
+      color: #fff;
+    }
+
+    .pill-demo {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 6px;
+      padding: 6px 12px;
+      margin: 4px 0;
+    }
+
+    .pill-icon {
+      width: 16px;
+      height: 16px;
+      background: #888;
+      border-radius: 8px;
+      position: relative;
+    }
+
+    .pill-icon::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 8px;
+      height: 16px;
+      background: #666;
+      border-radius: 8px 0 0 8px;
+    }
+
+    .pill-icon.active {
+      background: var(--accent);
+      box-shadow: 0 0 8px var(--accent);
+    }
+
+    .pill-icon.active::after {
+      background: var(--accent-light);
+    }
+
+    .cta {
+      margin-top: 50px;
+      text-align: center;
+    }
+
+    .cta-button {
+      display: inline-block;
+      background: var(--accent);
+      color: #000;
+      font-size: 16px;
+      font-weight: 600;
+      padding: 14px 32px;
+      border-radius: 8px;
+      text-decoration: none;
+      transition: all 0.2s;
+    }
+
+    .cta-button:hover {
+      background: var(--accent-light);
+      transform: translateY(-2px);
+      box-shadow: 0 4px 20px rgba(255, 107, 0, 0.3);
+    }
+
+    .footer {
+      margin-top: 60px;
+      padding-top: 30px;
+      border-top: 1px solid #222;
+      text-align: center;
+      color: #555;
+      font-size: 14px;
+    }
+
+    .highlight {
+      color: var(--accent);
+    }
+
+    code {
+      background: #1a1a1a;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: 'SF Mono', Monaco, monospace;
+      font-size: 14px;
+      color: var(--accent);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="logo">
+      <span class="logo-bold">Vita</span><span class="logo-light">min</span>
+    </div>
+    <div class="tagline">Privacy-first browsing with built-in data poisoning</div>
+
+    <h2>What is Vitamin?</h2>
+    <p>
+      Vitamin is a privacy-focused browser built on LibreWolf. It includes all the privacy
+      protections you'd expect, plus something unique: <strong class="highlight">Data Poisoning</strong>.
+    </p>
+
+    <div class="feature">
+      <div class="feature-header">
+        <div class="feature-icon">💊</div>
+        <h3>Data Poisoning</h3>
+      </div>
+      <p>
+        Trackers build profiles on you based on your browsing. Vitamin fights back by
+        generating fake browsing activity in the background — polluting your tracker
+        profile with garbage data, making it useless for targeting you.
+      </p>
+    </div>
+
+    <h2>How It Works</h2>
+    <p>
+      When you activate the poison feature, Vitamin opens background tabs that simulate
+      realistic human browsing — searches, clicks, scrolling — all with randomized
+      fingerprints that look like different browsers and devices.
+    </p>
+    <p>
+      Trackers see this activity and add it to your profile. But since it's fake and
+      random, your real interests get buried in noise. Ad targeting becomes useless.
+    </p>
+
+    <h2>Using the Poison Button</h2>
+    <p>Look for the <span class="pill-demo"><span class="pill-icon"></span> pill icon</span> in your toolbar.</p>
+
+    <ol class="steps">
+      <li>
+        <strong>Click once</strong> to toggle poison on/off. When active, the icon
+        <span class="pill-demo"><span class="pill-icon active"></span> glows orange</span>.
+      </li>
+      <li>
+        <strong>Right-click</strong> to open settings — adjust frequency, max tabs,
+        search engines, and more.
+      </li>
+      <li>
+        <strong>Hover</strong> over the button to see live stats: tabs opened,
+        searches performed, sites visited.
+      </li>
+    </ol>
+
+    <div class="feature">
+      <div class="feature-header">
+        <div class="feature-icon">⚙️</div>
+        <h3>Settings</h3>
+      </div>
+      <p>
+        Right-click the pill button to customize: how often new tabs open, how many
+        run at once, which search engines to use (Bing and Yahoo are recommended —
+        Google may trigger CAPTCHAs), and whether to auto-start on browser launch.
+      </p>
+    </div>
+
+    <h2>Tips</h2>
+    <p>
+      • <strong>Let it run in the background</strong> — the longer it runs, the more noise in your profile<br>
+      • <strong>Use alongside your normal browsing</strong> — your real activity mixes with fake data<br>
+      • <strong>Don't worry about the tabs</strong> — they open in isolated containers and close automatically
+    </p>
+
+    <div class="cta">
+      <a href="#" class="cta-button" onclick="window.close(); return false;">Get Started</a>
+    </div>
+
+    <div class="footer">
+      Vitamin Browser — Take back your privacy
+    </div>
+  </div>
+</body>
+</html>

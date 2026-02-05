@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <!-- Flask body -->
+  <path fill="#4ade80" d="M5 2h6v2h1v1h-1v3l2 5v1H3v-1l2-5V5H4V4h1V2zm1 1v3.5L4.5 12h7L10 6.5V3H6z"/>
+  <!-- Liquid (bright green) -->
+  <path fill="#22c55e" d="M5.5 10h5l.5 1.5v.5h-6v-.5L5.5 10z"/>
+  <!-- Bubbles -->
+  <circle cx="7" cy="11" r="0.5" fill="#86efac"/>
+  <circle cx="9" cy="10.5" r="0.4" fill="#86efac"/>
+</svg>
